@@ -19,17 +19,35 @@ PVS is designed to be accessible for beginners (requiring zero setup using the p
 
 ## 🖥️ Interface Showcase
 
-### 1. Interactive Command Line Interface
-The PVS terminal interface features host discovery status logs, target profile summaries, connection progress tracking, and structured live port service tables:
-![PVS Interactive CLI Terminal](docs/screenshots/cli_terminal.png)
+### 1. Interactive Command Line Interface (CLI)
+The PVS terminal interface handles target profiling, active host ping sweeps, async socket workers, and prints structured tables of open ports:
+
+* **Host Discovery and Disclaimer Banner:**
+  ![PVS Scanner Logo and Warnings](docs/screenshots/pvs_full_scan_1.png)
+
+* **Asynchronous Scan Progress Monitor:**
+  ![Asynchronous Scan Progress](docs/screenshots/pvs_full_scan_2.png)
+
+* **Recon Audit Output Details (Part 1):**
+  ![TCP Port Auditing Table 1](docs/screenshots/pvs_full_scan_3.png)
+
+* **Recon Audit Output Details (Part 2):**
+  ![TCP Port Auditing Table 2](docs/screenshots/pvs_full_scan_4.png)
 
 ### 2. Polished HTML Scan Dashboard
-The generated HTML report provides a high-level threat recon assessment dashboard highlighting overall scan statistics, host summaries, and CVE severities:
-![PVS HTML Scan Dashboard](docs/screenshots/html_report_dashboard.png)
+PVS generates visually stunning, slate-cyan HTML dashboards summarizing overall vulnerability findings:
 
-### 3. Vulnerability Correlation Panel
-An audit panel displaying matching NVD exploits with real-time CVSS scores, threat descriptions, and severity indicators for exposed ports:
-![PVS HTML Vulnerability Correlation](docs/screenshots/html_report_vulnerabilities.png)
+* **Executive Summary Dashboard:**
+  ![HTML Report Dashboard Header](docs/screenshots/html_report_2.png)
+
+* **Host Scan Details & Services List:**
+  ![HTML Report Services Table](docs/screenshots/html_report_1.png)
+
+* **NVD CVE Vulnerability Correlation List (Part 1):**
+  ![CVE Vulnerability Exploit Correlation 1](docs/screenshots/html_report_4.png)
+
+* **NVD CVE Vulnerability Correlation List (Part 2):**
+  ![CVE Vulnerability Exploit Correlation 2](docs/screenshots/html_report_3.png)
 
 ---
 
