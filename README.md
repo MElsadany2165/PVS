@@ -1,10 +1,35 @@
 # PVS (Personal Vulnerability Scanner)
 
+```text
+  ██████╗ ██╗   ██╗███████╗
+  ██╔══██╗██║   ██║██╔════╝    Personal Vulnerability Scanner
+  ██████╔╝██║   ██║███████╗    v1.0.0
+  ██╔═══╝ ╚██╗ ██╔╝╚════██║
+  ██║      ╚████╔╝ ███████║    Ethical Security Testing
+  ╚═╝       ╚═══╝  ╚══════╝
+```
+
 **PVS** is a high-performance, asynchronous command-line tool designed for network reconnaissance and vulnerability assessment. It streamlines the process of discovering open ports, identifying running services, and correlating them with known security vulnerabilities using the NIST National Vulnerability Database (NVD).
 
 *Developed by **Mohamed Essam Elsadany**.*
 
 PVS is designed to be accessible for beginners (requiring zero setup using the pre-compiled binary) while providing the speed, architecture depth, and parameter controls required by cybersecurity experts.
+
+---
+
+## 🖥️ Interface Showcase
+
+### 1. Interactive Command Line Interface
+The PVS terminal interface features host discovery status logs, target profile summaries, connection progress tracking, and structured live port service tables:
+![PVS Interactive CLI Terminal](docs/screenshots/cli_terminal.png)
+
+### 2. Polished HTML Scan Dashboard
+The generated HTML report provides a high-level threat recon assessment dashboard highlighting overall scan statistics, host summaries, and CVE severities:
+![PVS HTML Scan Dashboard](docs/screenshots/html_report_dashboard.png)
+
+### 3. Vulnerability Correlation Panel
+An audit panel displaying matching NVD exploits with real-time CVSS scores, threat descriptions, and severity indicators for exposed ports:
+![PVS HTML Vulnerability Correlation](docs/screenshots/html_report_vulnerabilities.png)
 
 ---
 
