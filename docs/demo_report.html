@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PVS THREAT ASSESSMENT AUDIT - 192.168.1.0/24</title>
+<style>
+:root {
+    --bg: #07090e; --surface: #0f131a; --border: #1e293b;
+    --text: #f8fafc; --muted: #94a3b8; --accent: #06b6d4;
+    --success: #10b981; --warning: #ca8a04; --danger: #ef4444;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+}
+.container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+.header {
+    background: linear-gradient(135deg, #0f172a 0%, #020617 100%);
+    border: 1px solid var(--border); border-top: 4px solid var(--accent);
+    border-radius: 16px; padding: 2.5rem; margin-bottom: 2rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+.header h1 {
+    font-size: 2.2rem; font-weight: 800;
+    background: linear-gradient(135deg, #06b6d4, #3b82f6);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    letter-spacing: -0.025em;
+}
+.header .meta { color: var(--muted); margin-top: 0.5rem; font-size: 0.9rem; }
+.stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem; margin-bottom: 2rem;
+}
+.stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem; text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.stat-card .value {
+    font-size: 2.5rem; font-weight: 700; color: var(--accent);
+}
+.stat-card .label { color: var(--muted); font-size: 0.85rem; text-transform: uppercase; }
+.section {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.section h2 {
+    font-size: 1.3rem; margin-bottom: 1rem;
+    padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);
+    color: var(--text);
+}
+table { width: 100%; border-collapse: collapse; margin-bottom: 0.5rem; }
+th, td {
+    padding: 0.75rem 1rem; text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+.port-num { font-family: monospace; font-weight: 600; color: var(--accent); }
+.badge {
+    display: inline-block; padding: 0.2rem 0.6rem; border-radius: 6px;
+    font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+}
+.badge-open { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+.cve-card {
+    background: rgba(30, 41, 59, 0.3); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.25rem; margin: 0.75rem 0;
+}
+.cve-id { font-family: monospace; font-weight: 700; }
+.severity {
+    display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
+    font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+}
+.footer { text-align: center; color: var(--muted); padding: 2.5rem; font-size: 0.85rem; border-top: 1px solid var(--border); margin-top: 2rem; }
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+    <h1>PVS Threat Recon Report</h1>
+    <div class="meta">
+        <strong>Target Matrix:</strong> 192.168.1.0/24 &nbsp;|&nbsp;
+        <strong>Execution Time:</strong> 2026-05-17T09:00:00 &nbsp;|&nbsp;
+        <strong>Audit Engine:</strong> PVS v1.0.0
+    </div>
+</div>
+<div class="stats">
+    <div class="stat-card"><div class="value">3</div><div class="label">Hosts Scanned</div></div>
+    <div class="stat-card"><div class="value">10</div><div class="label">Open Ports</div></div>
+    <div class="stat-card"><div class="value">6</div><div class="label">CVEs Found</div></div>
+    <div class="stat-card">
+        <div class="value" style="font-size: 1.5rem; display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.8rem; margin-bottom: 0.8rem;">
+            <span style="color:#dc2626;" title="Critical">1</span>
+            <span style="color:var(--muted)">/</span>
+            <span style="color:#ea580c;" title="High">3</span>
+            <span style="color:var(--muted)">/</span>
+            <span style="color:#ca8a04;" title="Medium">2</span>
+            <span style="color:var(--muted)">/</span>
+            <span style="color:#16a34a;" title="Low">0</span>
+        </div>
+        <div class="label">Crit / High / Med / Low</div>
+    </div>
+</div>
+
+<div class="section">
+    <h2>Host: 192.168.1.1 (gateway.local)</h2>
+    <p style="color:var(--muted);margin-bottom:1rem;">
+        Scan completed in 3.42s — 3 open port(s)
+    </p>
+    <table>
+        <thead><tr><th>Port</th><th>State</th><th>Service</th><th>Version</th><th>Captured Banner / Recon</th></tr></thead>
+        <tbody>
+
+            <tr>
+                <td class="port-num">22</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>ssh</td>
+                <td>OpenSSH_8.9p1</td>
+                <td><span style="font-family: monospace; font-size: 0.8rem; color: var(--muted);">SSH-2.0-OpenSSH_8.9p1</span></td>
+            </tr>
+            <tr>
+                <td class="port-num">80</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>http</td>
+                <td>nginx/1.24.0</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr>
+            <tr>
+                <td class="port-num">443</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>https</td>
+                <td>nginx/1.24.0</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr></tbody></table><h3 style="margin-top:1.5rem;margin-bottom:0.5rem;">⚠️ Vulnerabilities</h3>
+<div class="cve-card" style="border-left: 4px solid #dc2626;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+        <div>
+            <span class="cve-id" style="color:#dc2626; font-size: 1rem;">CVE-2023-38408</span>
+            <span class="severity" style="background:#dc262622;color:#dc2626; margin-left: 0.5rem;">CRITICAL (9.8)</span>
+        </div>
+        <span style="color:var(--muted); font-size: 0.8rem;">Port 22/ssh <span style="color: var(--muted); font-size: 0.75rem; margin-left: 1rem;">Published: 2023-07-20</span></span>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text);">PKCS#11 feature in ssh-agent allows remote code execution via forwarded agent</p>
+    <div style="font-family: monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; background: rgba(0,0,0,0.15); padding: 0.25rem 0.5rem; border-radius: 4px; display: inline-block;">CVSS Vector: CVSS:3.1/AV:N</div>
+</div>
+<div class="cve-card" style="border-left: 4px solid #ea580c;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+        <div>
+            <span class="cve-id" style="color:#ea580c; font-size: 1rem;">CVE-2023-51385</span>
+            <span class="severity" style="background:#ea580c22;color:#ea580c; margin-left: 0.5rem;">HIGH (6.5)</span>
+        </div>
+        <span style="color:var(--muted); font-size: 0.8rem;">Port 22/ssh <span style="color: var(--muted); font-size: 0.75rem; margin-left: 1rem;">Published: 2023-12-18</span></span>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text);">OS command injection via ssh, scp, sftp shell metacharacters in host/user names</p>
+    <div style="font-family: monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; background: rgba(0,0,0,0.15); padding: 0.25rem 0.5rem; border-radius: 4px; display: inline-block;">CVSS Vector: CVSS:3.1/AV:N</div>
+</div>
+<div class="cve-card" style="border-left: 4px solid #ca8a04;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+        <div>
+            <span class="cve-id" style="color:#ca8a04; font-size: 1rem;">CVE-2024-7347</span>
+            <span class="severity" style="background:#ca8a0422;color:#ca8a04; margin-left: 0.5rem;">MEDIUM (4.7)</span>
+        </div>
+        <span style="color:var(--muted); font-size: 0.8rem;">Port 80/http <span style="color: var(--muted); font-size: 0.75rem; margin-left: 1rem;">Published: 2024-08-14</span></span>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text);">nginx mp4 module: buffer over-read via specially crafted mp4 file</p>
+    <div style="font-family: monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; background: rgba(0,0,0,0.15); padding: 0.25rem 0.5rem; border-radius: 4px; display: inline-block;">CVSS Vector: CVSS:3.1/AV:L</div>
+</div></div>
+<div class="section">
+    <h2>Host: 192.168.1.10 (webserver.local)</h2>
+    <p style="color:var(--muted);margin-bottom:1rem;">
+        Scan completed in 2.87s — 4 open port(s)
+    </p>
+    <table>
+        <thead><tr><th>Port</th><th>State</th><th>Service</th><th>Version</th><th>Captured Banner / Recon</th></tr></thead>
+        <tbody>
+
+            <tr>
+                <td class="port-num">80</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>http</td>
+                <td>Apache/2.4.57</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr>
+            <tr>
+                <td class="port-num">443</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>https</td>
+                <td>Apache/2.4.57</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr>
+            <tr>
+                <td class="port-num">3306</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>mysql</td>
+                <td>8.0.35</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr>
+            <tr>
+                <td class="port-num">6379</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>redis</td>
+                <td>7.2.3</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr></tbody></table><h3 style="margin-top:1.5rem;margin-bottom:0.5rem;">⚠️ Vulnerabilities</h3>
+<div class="cve-card" style="border-left: 4px solid #ea580c;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+        <div>
+            <span class="cve-id" style="color:#ea580c; font-size: 1rem;">CVE-2023-43622</span>
+            <span class="severity" style="background:#ea580c22;color:#ea580c; margin-left: 0.5rem;">HIGH (7.5)</span>
+        </div>
+        <span style="color:var(--muted); font-size: 0.8rem;">Port 80/http <span style="color: var(--muted); font-size: 0.75rem; margin-left: 1rem;">Published: 2023-10-23</span></span>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text);">Apache HTTP Server: HTTP/2 stream handling DoS</p>
+    <div style="font-family: monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; background: rgba(0,0,0,0.15); padding: 0.25rem 0.5rem; border-radius: 4px; display: inline-block;">CVSS Vector: CVSS:3.1/AV:N</div>
+</div>
+<div class="cve-card" style="border-left: 4px solid #ea580c;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+        <div>
+            <span class="cve-id" style="color:#ea580c; font-size: 1rem;">CVE-2023-31122</span>
+            <span class="severity" style="background:#ea580c22;color:#ea580c; margin-left: 0.5rem;">HIGH (7.5)</span>
+        </div>
+        <span style="color:var(--muted); font-size: 0.8rem;">Port 80/http <span style="color: var(--muted); font-size: 0.75rem; margin-left: 1rem;">Published: 2023-10-23</span></span>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text);">Apache mod_macro buffer over-read vulnerability</p>
+    <div style="font-family: monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; background: rgba(0,0,0,0.15); padding: 0.25rem 0.5rem; border-radius: 4px; display: inline-block;">CVSS Vector: CVSS:3.1/AV:N</div>
+</div>
+<div class="cve-card" style="border-left: 4px solid #ca8a04;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+        <div>
+            <span class="cve-id" style="color:#ca8a04; font-size: 1rem;">CVE-2024-20960</span>
+            <span class="severity" style="background:#ca8a0422;color:#ca8a04; margin-left: 0.5rem;">MEDIUM (6.5)</span>
+        </div>
+        <span style="color:var(--muted); font-size: 0.8rem;">Port 3306/mysql <span style="color: var(--muted); font-size: 0.75rem; margin-left: 1rem;">Published: 2024-01-16</span></span>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text);">MySQL Server: Optimizer unspecified vulnerability allows low-privilege attacker DoS</p>
+    <div style="font-family: monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; background: rgba(0,0,0,0.15); padding: 0.25rem 0.5rem; border-radius: 4px; display: inline-block;">CVSS Vector: CVSS:3.1/AV:N</div>
+</div></div>
+<div class="section">
+    <h2>Host: 192.168.1.50 (dev-machine.local)</h2>
+    <p style="color:var(--muted);margin-bottom:1rem;">
+        Scan completed in 1.93s — 3 open port(s)
+    </p>
+    <table>
+        <thead><tr><th>Port</th><th>State</th><th>Service</th><th>Version</th><th>Captured Banner / Recon</th></tr></thead>
+        <tbody>
+
+            <tr>
+                <td class="port-num">22</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>ssh</td>
+                <td>OpenSSH_9.5</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr>
+            <tr>
+                <td class="port-num">5432</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>postgresql</td>
+                <td>16.1</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr>
+            <tr>
+                <td class="port-num">8080</td>
+                <td><span class="badge badge-open">open</span></td>
+                <td>http-proxy</td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">-</span></td>
+                <td><span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span></td>
+            </tr></tbody></table></div>
+<div class="footer">
+    Generated by <strong>PVS - Personal Vulnerability Scanner</strong> v1.0.0<br>
+    Developed by <strong>Mohamed Essam Elsadany</strong> | Copyright &copy; 2026<br>
+    WARNING: For authorized security testing only. Always obtain proper permission before scanning.
+</div>
+</div></body></html>

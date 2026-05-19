@@ -1,49 +1,34 @@
+#!/usr/bin/env python3
 """
 PVS - Personal Vulnerability Scanner
 Main CLI entry point using argparse.
 """
 import argparse
 import asyncio
+import datetime
 import os
 import sys
 import time
 
 from pvs import __version__
-from pvs.scanner import resolve_targets, parse_ports, scan_host
+from pvs.scanner import resolve_targets, parse_ports, scan_host, filter_live_hosts
 from pvs.nvd_client import NVDClient
 from pvs.reporter import (
     build_scan_data, generate_json_report,
     generate_csv_report, generate_html_report,
 )
 from pvs.display import (
-    console, show_banner, show_scan_config, show_host_results,
-    show_cve_results, show_summary, create_progress,
-    show_warning, show_error, show_info,
+    console, show_banner, show_disclaimer, show_scan_config,
+    show_host_results, show_cve_results, show_summary,
+    create_progress, show_warning, show_error, show_info,
 )
 from pvs.logger import setup_logging
-
-
-DISCLAIMER = (
-    "\n"
-    "  [bold yellow]+------------------------------------------------------------+[/]\n"
-    "  [bold yellow]|[/]  [bold yellow][!] IMPORTANT: LEGAL & ETHICAL NOTICE[/]                       [bold yellow]|[/]\n"
-    "  [bold yellow]|[/]                                                            [bold yellow]|[/]\n"
-    "  [bold yellow]|[/]  This tool is for AUTHORIZED SECURITY TESTING ONLY.         [bold yellow]|[/]\n"
-    "  [bold yellow]|[/]  You must have explicit written permission to scan any       [bold yellow]|[/]\n"
-    "  [bold yellow]|[/]  host or network that you do not own.                        [bold yellow]|[/]\n"
-    "  [bold yellow]|[/]                                                            [bold yellow]|[/]\n"
-    "  [bold yellow]|[/]  Unauthorized scanning is ILLEGAL in most jurisdictions.     [bold yellow]|[/]\n"
-    "  [bold yellow]|[/]  The authors assume no liability for misuse of this tool.    [bold yellow]|[/]\n"
-    "  [bold yellow]+------------------------------------------------------------+[/]\n"
-)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pvs",
-        description="PVS - Personal Vulnerability Scanner v" + __version__,
-        epilog="Example: pvs scan 192.168.1.1 -p top100 --cve",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="pvs - personal vulnerability scanner",
     )
     parser.add_argument("-V", "--version", action="version", version=f"PVS v{__version__}")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress banner and non-essential output")
@@ -57,16 +42,17 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser = subparsers.add_parser("scan", help="Scan a target for open ports and services")
     scan_parser.add_argument("target", help="Target host, IP, CIDR range, or IP range (e.g., 192.168.1.0/24)")
     scan_parser.add_argument("-p", "--ports", default="top100",
-                             help="Ports to scan: number, range (1-1024), preset (top20/top100/common/all)")
+                             help="Ports to scan: number, range (1-1024), preset (top20/top100/common/enterprise/all)")
     scan_parser.add_argument("-t", "--timeout", type=float, default=2.0, help="Connection timeout in seconds")
     scan_parser.add_argument("-c", "--concurrency", type=int, default=100, help="Max concurrent connections")
+    scan_parser.add_argument("--no-ping", action="store_true", help="Skip host discovery ping sweep")
     scan_parser.add_argument("--no-banner-grab", action="store_true", help="Disable service banner grabbing")
     scan_parser.add_argument("--cve", action="store_true", help="Look up CVEs for discovered services (NVD API)")
     scan_parser.add_argument("--nvd-api-key", help="NVD API key for faster CVE lookups")
     scan_parser.add_argument("--max-cves", type=int, default=5, help="Max CVEs to retrieve per service")
     scan_parser.add_argument("-o", "--output", help="Output report file path")
-    scan_parser.add_argument("-f", "--format", default="json", choices=["json", "csv", "html", "all"],
-                             help="Report format (default: json)")
+    scan_parser.add_argument("-f", "--format", default="html", choices=["json", "csv", "html", "all"],
+                             help="Report format (default: html)")
     scan_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     # --- info command ---
@@ -78,6 +64,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def run_scan(args):
     """Execute the scan command."""
+    # Suppress Windows ProactorEventLoop WinError 10054 connection reset callback noise
+    try:
+        loop = asyncio.get_running_loop()
+        def handle_asyncio_exception(loop, context):
+            exception = context.get("exception")
+            if isinstance(exception, ConnectionResetError) or (
+                exception and getattr(exception, "winerror", None) == 10054
+            ):
+                return
+            loop.default_exception_handler(context)
+        loop.set_exception_handler(handle_asyncio_exception)
+    except Exception:
+        pass
+
     # Resolve targets
     targets = resolve_targets(args.target)
     if not targets:
@@ -89,6 +89,15 @@ async def run_scan(args):
     if not ports:
         show_error(f"No valid ports in specification: {args.ports}")
         return 1
+
+    # Host Discovery (Ping sweep) for multiple targets
+    if len(targets) > 1 and not args.no_ping:
+        show_info(f"Running host discovery on {len(targets)} IP(s)...")
+        targets = await filter_live_hosts(targets, concurrency=50)
+        if not targets:
+            show_error("No live hosts discovered (all pings failed). Use --no-ping to force scan.")
+            return 1
+        show_info(f"Found {len(targets)} live host(s).")
 
     # Show config
     show_scan_config(args.target, len(ports), {
@@ -150,20 +159,27 @@ async def run_scan(args):
             nvd = NVDClient(api_key=args.nvd_api_key or os.environ.get("NVD_API_KEY"))
             show_info(f"Looking up CVEs for {len(open_services)} service(s)...")
 
-            seen_services = set()
+            seen_services = {}
+            
+            async def _lookup(ip, pr, task_id):
+                svc_key = f"{pr.service}:{pr.version}"
+                if svc_key in seen_services:
+                    cves = seen_services[svc_key]
+                else:
+                    cves = await nvd.lookup_service_cves_async(
+                        pr.service, pr.version, banner=pr.banner, max_results=args.max_cves
+                    )
+                    seen_services[svc_key] = cves
+                
+                if cves:
+                    key = f"{ip}:{pr.port}"
+                    cve_results[key] = cves
+                progress.update(task_id, advance=1)
+
             with create_progress() as progress:
                 task = progress.add_task("CVE Lookup", total=len(open_services))
-                for ip, pr in open_services:
-                    svc_key = f"{pr.service}:{pr.version}"
-                    if svc_key not in seen_services:
-                        seen_services.add(svc_key)
-                        cves = nvd.lookup_service_cves(
-                            pr.service, pr.version, max_results=args.max_cves
-                        )
-                        if cves:
-                            key = f"{ip}:{pr.port}"
-                            cve_results[key] = cves
-                    progress.update(task, advance=1)
+                tasks = [_lookup(ip, pr, task) for ip, pr in open_services]
+                await asyncio.gather(*tasks)
 
             show_cve_results(cve_results)
 
@@ -175,17 +191,26 @@ async def run_scan(args):
 
     if args.output:
         base = args.output.rsplit(".", 1)[0] if "." in args.output else args.output
-        fmt = args.format
+    else:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if not os.path.exists("reports"):
+            try:
+                os.makedirs("reports")
+            except OSError:
+                pass
+        base = f"reports/PVS-{timestamp}"
 
-        if fmt in ("json", "all"):
-            generate_json_report(scan_data, f"{base}.json")
-            show_info(f"JSON report saved: {base}.json")
-        if fmt in ("csv", "all"):
-            generate_csv_report(scan_data, f"{base}.csv")
-            show_info(f"CSV report saved: {base}.csv")
-        if fmt in ("html", "all"):
-            generate_html_report(scan_data, f"{base}.html")
-            show_info(f"HTML report saved: {base}.html")
+    fmt = args.format
+
+    if fmt in ("json", "all"):
+        generate_json_report(scan_data, f"{base}.json")
+        show_info(f"JSON report saved: {base}.json")
+    if fmt in ("csv", "all"):
+        generate_csv_report(scan_data, f"{base}.csv")
+        show_info(f"CSV report saved: {base}.csv")
+    if fmt in ("html", "all"):
+        generate_html_report(scan_data, f"{base}.html")
+        show_info(f"HTML report saved: {base}.html")
 
     return 0
 
@@ -221,7 +246,7 @@ def main():
 
     if not args.quiet:
         show_banner()
-        console.print(DISCLAIMER)
+        show_disclaimer()
 
     if not args.command:
         parser.print_help()

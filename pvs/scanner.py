@@ -3,8 +3,10 @@ Port Scanner Module - TCP connect scans with async concurrency.
 """
 import asyncio
 import socket
+import ssl
 import time
 import re
+import sys
 from dataclasses import dataclass, field
 from ipaddress import IPv4Address, ip_address, ip_network
 from typing import Optional
@@ -110,11 +112,28 @@ def parse_ports(port_spec: str) -> list[int]:
 
 
 async def grab_banner(ip: str, port: int, timeout: float = 3.0) -> str:
-    """Attempt to grab a service banner from an open port."""
+    """Attempt to grab a service banner from an open port, handling SSL/TLS if appropriate."""
+    use_ssl = port in (443, 8443)
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(ip, port), timeout=timeout
-        )
+        if use_ssl:
+            try:
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, port, ssl=ssl_context), timeout=timeout
+                )
+            except Exception:
+                # Fallback to plain connection if SSL fails
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, port), timeout=timeout
+                )
+                use_ssl = False
+        else:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, port), timeout=timeout
+            )
+
         try:
             banner = await asyncio.wait_for(reader.read(1024), timeout=2.0)
             if banner:
@@ -125,14 +144,23 @@ async def grab_banner(ip: str, port: int, timeout: float = 3.0) -> str:
             pass
 
         if port in (80, 8080, 8000, 8888, 443, 8443):
-            http_req = f"HEAD / HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\n\r\n"
+            http_req = f"GET / HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\n\r\n"
             writer.write(http_req.encode())
             await writer.drain()
             try:
                 resp = await asyncio.wait_for(reader.read(2048), timeout=2.0)
                 writer.close()
                 await writer.wait_closed()
-                return resp.decode("utf-8", errors="replace").strip()
+                resp_text = resp.decode("utf-8", errors="replace")
+                banner_out = resp_text.strip()
+                
+                # Attempt to extract <title> for HTTP services
+                title_match = re.search(r"<title>(.*?)</title>", resp_text, re.IGNORECASE | re.DOTALL)
+                if title_match:
+                    title = title_match.group(1).strip()
+                    banner_out = f"{banner_out}\nTitle: {title}"
+                    
+                return banner_out
             except asyncio.TimeoutError:
                 pass
 
@@ -140,15 +168,21 @@ async def grab_banner(ip: str, port: int, timeout: float = 3.0) -> str:
         await writer.drain()
         try:
             banner = await asyncio.wait_for(reader.read(1024), timeout=2.0)
+        except asyncio.TimeoutError:
+            banner = b""
+            
+        try:
             writer.close()
             await writer.wait_closed()
-            return banner.decode("utf-8", errors="replace").strip()
-        except asyncio.TimeoutError:
+        except OSError:
             pass
-        writer.close()
-        await writer.wait_closed()
+            
+        if banner:
+            return banner.decode("utf-8", errors="replace").strip()
+
     except (asyncio.TimeoutError, ConnectionRefusedError, OSError, ConnectionResetError):
         pass
+        
     return ""
 
 
@@ -198,6 +232,69 @@ async def scan_port(ip: str, port: int, timeout: float = 2.0, grab_banners: bool
     except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
         return None
 
+async def is_host_alive(ip: str, timeout: int = 1) -> bool:
+    """Check if a host is alive using system ping (ICMP) and fallback TCP ping."""
+    platform = sys.platform.lower()
+    if platform == "win32":
+        param = "-n"
+        timeout_param = "-w"
+        timeout_val = str(timeout * 1000)
+    elif platform == "darwin":
+        param = "-c"
+        timeout_param = "-W"  # macOS ping timeout is in milliseconds
+        timeout_val = str(timeout * 1000)
+    else:  # Linux and other Unix-like systems
+        param = "-c"
+        timeout_param = "-W"  # Linux ping timeout is in seconds
+        timeout_val = str(timeout)
+    
+    icmp_success = False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ping", param, "1", timeout_param, timeout_val, ip,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await proc.wait()
+        icmp_success = (proc.returncode == 0)
+    except OSError:
+        pass
+
+    if icmp_success:
+        return True
+
+    # TCP Ping Fallback (common ports: 22, 80, 443, 445, 3389)
+    tcp_ports = [22, 80, 443, 445, 3389]
+    for port in tcp_ports:
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, port), timeout=0.5
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except (ConnectionRefusedError, ConnectionResetError):
+            # Actively refused/reset means the host is alive
+            return True
+        except Exception:
+            continue
+
+    return False
+
+
+async def filter_live_hosts(ips: list[str], concurrency: int = 50) -> list[str]:
+    """Filter a list of IPs to only those that respond to ping."""
+    live_hosts = []
+    sem = asyncio.Semaphore(concurrency)
+    
+    async def _check(ip):
+        async with sem:
+            if await is_host_alive(ip):
+                live_hosts.append(ip)
+                
+    tasks = [_check(ip) for ip in ips]
+    await asyncio.gather(*tasks)
+    return live_hosts
 
 async def scan_host(ip, ports, timeout=2.0, concurrency=100, grab_banners=True, progress_cb=None):
     """Scan all specified ports on a single host."""
