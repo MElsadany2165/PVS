@@ -38,7 +38,7 @@ dev = [
 ]
 
 [project.scripts]
-pvs = "pvs_cli:main"
+pvs = "pvs.cli:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
@@ -46,9 +46,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["pvs*"]
-
-[tool.setuptools]
-py-modules = ["pvs_cli"]
 
 [tool.black]
 line-length = 100

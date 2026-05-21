@@ -99,20 +99,7 @@ PVS relies on a modern asynchronous architecture to optimize network I/O:
 
 ## 📥 Installation
 
-### Option 1: Standalone Pre-compiled Binary (Recommended for Beginners)
-No Python installation is required. This single binary runs directly out of your terminal:
-
-1. Locate the pre-compiled `pvs.exe` inside the `dist/` folder.
-2. Open PowerShell or Command Prompt.
-3. Navigate to the folder.
-4. Execute the tool:
-   ```powershell
-   .\pvs.exe scan 127.0.0.1
-   ```
-   *(Note: Remember the `.\` prefix in Windows PowerShell when executing local binaries).*
-
-### Option 2: Python Source Installation (For Linux, macOS, and Developers)
-For Linux, macOS, or custom testing environments, install from source (requires Python 3.10+):
+Ensure you have Python 3.10+ installed on your system.
 
 ```bash
 # 1. Clone the repository
@@ -120,19 +107,38 @@ git clone https://github.com/MElsadany2165/PVS.git
 cd PVS
 
 # 2. Set up virtual environment
-python3 -m venv venv
+python -m venv venv
 source venv/bin/activate  # On Windows: .\venv\Scripts\activate
 
 # 3. Install required libraries
 pip install -r requirements.txt
+```
 
-# 4. Make execution entry point executable
-chmod +x pvs_cli.py
-```
-You can run it directly:
-```bash
-python pvs_cli.py scan scanme.nmap.org
-```
+### Running the Scanner
+
+Once setup is complete, you can run the scanner easily directly using Python:
+
+- **Running via python/py (from the workspace root)**:
+  ```powershell
+  py PVS scan 127.0.0.1
+  ```
+  *(Note: You can also use `python -m pvs scan 127.0.0.1`)*
+
+- **Running from the parent directory**:
+  If you are in the parent directory of the cloned `PVS` repository, you can simply run:
+  ```powershell
+  py PVS scan 127.0.0.1
+  ```
+
+- **Alternative: Install as a local command-line tool**:
+  You can install the package locally in editable mode:
+  ```bash
+  pip install -e .
+  ```
+  After installation, the `pvs` command will be available directly in your terminal:
+  ```bash
+  pvs scan 127.0.0.1
+  ```
 
 ---
 
@@ -141,23 +147,19 @@ python pvs_cli.py scan scanme.nmap.org
 ### 1. Basic Local/Host Discovery Scan
 Scan the top 20 ports of a target to discover open ports:
 ```powershell
-# Using Standalone Binary
-.\pvs.exe scan 127.0.0.1 -p top20
-
-# Using Python Source
-python pvs_cli.py scan 127.0.0.1 -p top20
+py PVS scan 127.0.0.1 -p top20
 ```
 
 ### 2. Deep Vulnerability Scan
 Grab service banners, identify application versions, and automatically check them against the NIST CVE database:
 ```powershell
-.\pvs.exe scan 192.168.1.1 -p top100 --cve
+py PVS scan 192.168.1.1 -p top100 --cve
 ```
 
 ### 3. Exhaustive Subnet Network Audit
 Audit a whole subnet range for all 65,535 TCP ports with high speed (500 parallel workers), perform CVE checks, and export all report formats (`reports/PVS-*`):
 ```powershell
-.\pvs.exe scan 192.168.1.0/24 -p all --cve -c 500 -t 1.5 -f all
+py PVS scan 192.168.1.0/24 -p all --cve -c 500 -t 1.5 -f all
 ```
 
 ---
@@ -209,36 +211,19 @@ Each scan creates detailed summaries in your project root `reports/` folder:
 
 ---
 
-## 🛠️ Troubleshooting & OS Policies
+## 🛠️ Developer & Test Guide
 
-### Windows AppLocker / SmartScreen Blocks
-If you try to run the compiled binary on Windows and see this error:
-`Program 'pvs.exe' failed to run: An Application Control policy has blocked this file`
-
-This is caused by Group Policies blocking custom unsigned executables. You can bypass this by running the tool directly through the Python interpreter:
-```powershell
-.\venv\Scripts\python pvs_cli.py scan <target> [OPTIONS]
-```
-
----
-
-## 🛠️ Developer & Build Guide
-
-If you want to modify code and build the executable yourself:
-1. Set up dependencies:
+If you want to run tests or modify code:
+1. Set up dev dependencies:
    ```powershell
    pip install -r requirements.txt
-   pip install pyinstaller pytest
+   pip install -e .[dev]
    ```
 2. Run pytest suite:
    ```powershell
    python -m pytest
    ```
-3. Compile the standalone binary:
-   ```powershell
-   pyinstaller pvs.spec --noconfirm
-   ```
-   The compiled standalone binary will be written directly to the `dist/` directory.
+
 
 ---
 
