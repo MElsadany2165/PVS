@@ -39,7 +39,7 @@ If you are new to cybersecurity tools, here is how PVS helps you:
 3. **Finds Security Bugs (Vulnerabilities):** It automatically checks if those software versions contain known security issues (called **CVEs**).
 4. **Generates Pretty Reports:** It writes a colored, interactive report page detailing the findings that you can open in any web browser.
 
-### 📥 3-Step Setup
+### 📥 2-Step Setup
 Ensure you have [Python](https://www.python.org/downloads/) installed, then open PowerShell or Command Prompt and run:
 
 1. **Clone the code repository:**
@@ -48,13 +48,7 @@ Ensure you have [Python](https://www.python.org/downloads/) installed, then open
    cd PVS
    ```
 
-2. **Create a virtual environment (keeps dependencies clean):**
-   ```powershell
-   python -m venv venv
-   .\venv\Scripts\activate   # On macOS/Linux, run: source venv/bin/activate
-   ```
-
-3. **Install the scanner requirements:**
+2. **Install the scanner requirements:**
    ```powershell
    pip install -r requirements.txt
    ```
