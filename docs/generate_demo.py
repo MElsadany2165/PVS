@@ -6,7 +6,7 @@ from pvs.reporter import generate_html_report
 
 demo_data = {
     "scanner": "PVS",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "scan_time": "2026-05-17T09:00:00",
     "target": "192.168.1.0/24",
     "hosts": [
