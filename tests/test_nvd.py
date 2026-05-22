@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Mohamed Essam Elsadany
+# Licensed under the MIT License. See LICENSE file for details.
+
 import pytest
 from unittest.mock import MagicMock, patch
 from pvs.nvd_client import NVDClient, build_cpe, CVEEntry

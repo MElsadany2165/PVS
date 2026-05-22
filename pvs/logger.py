@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Mohamed Essam Elsadany
+# Licensed under the MIT License. See LICENSE file for details.
+
 # logger.py - basic logging setup
 # nothing fancy here, just wanted consistent log formatting across modules
 

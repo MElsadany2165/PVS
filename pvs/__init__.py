@@ -1,6 +1,6 @@
-# pvs - personal vulnerability scanner
-# started this as a weekend project to learn async networking
-# and it kinda grew into something actually useful lol
+# pvs - Personal Vulnerability Scanner
+# Copyright (c) 2026 Mohamed Essam Elsadany
+# Licensed under the MIT License. See LICENSE file for details.
 
 __version__ = "1.0.1"
-__author__ = "Your Name Here"  # TODO: change this before pushing to github
+__author__ = "Mohamed Essam Elsadany"

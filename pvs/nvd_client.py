@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Mohamed Essam Elsadany
+# Licensed under the MIT License. See LICENSE file for details.
+
 """
 NVD (National Vulnerability Database) API Client.
 Queries CVEs associated with detected services/products.

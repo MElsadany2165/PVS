@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Mohamed Essam Elsadany
+# Licensed under the MIT License. See LICENSE file for details.
+
 # services.py - port/service mappings and scan presets
 #
 # I pulled most of these from IANA's service name registry + nmap's

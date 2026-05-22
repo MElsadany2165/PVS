@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Mohamed Essam Elsadany
+# Licensed under the MIT License. See LICENSE file for details.
+
 """
 Rich CLI Display - Beautiful terminal output using the Rich library.
 """
@@ -26,7 +29,7 @@ BANNER_TEXT = (
     "\n"
     "  [bold bright_cyan]██████╗ ██╗   ██╗███████╗[/]\n"
     "  [bold bright_cyan]██╔══██╗██║   ██║██╔════╝[/]    [bold]Personal Vulnerability Scanner[/]\n"
-    "  [bold bright_cyan]██████╔╝██║   ██║███████╗[/]    [dim]v1.0.0[/]\n"
+    "  [bold bright_cyan]██████╔╝██║   ██║███████╗[/]    [dim]v1.0.1[/]\n"
     "  [bold bright_cyan]██╔═══╝ ╚██╗ ██╔╝╚════██║[/]\n"
     "  [bold bright_cyan]██║      ╚████╔╝ ███████║[/]    [dim]Ethical Security Testing[/]\n"
     "  [bold bright_cyan]╚═╝       ╚═══╝  ╚══════╝[/]\n"
