@@ -1,46 +1,38 @@
-# PVS (Personal Vulnerability Scanner)
+<p align="center">
+  <img src="docs/screenshots/pvs_full_scan_1.png" alt="PVS in action" width="700">
+</p>
 
-```text
-  ██████╗ ██╗   ██╗███████╗
-  ██╔══██╗██║   ██║██╔════╝    Personal Vulnerability Scanner
-  ██████╔╝██║   ██║███████╗    v1.1.0
-  ██╔═══╝ ╚██╗ ██╔╝╚════██║
-  ██║      ╚████╔╝ ███████║    Ethical Security Testing
-  ╚═╝       ╚═══╝  ╚══════╝
-```
+<h1 align="center">PVS — Personal Vulnerability Scanner</h1>
 
-**PVS** is a high-performance network scanner that discovers active devices, identifies their open ports (services), and matches them with known security vulnerabilities. 
+<p align="center">
+  <strong>Scan networks. Detect services. Find vulnerabilities.</strong><br>
+  <em>A fast, async Python CLI for port scanning, banner grabbing, and CVE lookup.</em>
+</p>
 
-*Developed by **Mohamed Essam Elsadany**.*
-
----
-
-## 🖥️ Showcases & Reports
-
-### 1. Interactive Command Line Interface (CLI)
-The console handles network discovery, async sockets progress, and displays structured tables of open ports and CVEs:
-![PVS Scanner Logo and Warnings](docs/screenshots/pvs_full_scan_1.png)
-![Asynchronous Scan Progress](docs/screenshots/pvs_full_scan_2.png)
-![TCP Port Auditing Table](docs/screenshots/pvs_full_scan_3.png)
-
-### 2. HTML Scan Dashboard
-PVS automatically generates beautiful, responsive slate-cyan HTML dashboards summarizing overall vulnerability findings:
-![HTML Report Dashboard Header](docs/screenshots/html_report_2.png)
-![HTML Report Services Table](docs/screenshots/html_report_1.png)
+<p align="center">
+  <a href="#-installation"><img src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
+  <a href="https://github.com/MElsadany2165/PVS/releases"><img src="https://img.shields.io/badge/version-1.1.0-cyan" alt="Version 1.1.0"></a>
+  <a href="#%EF%B8%8F-legal-disclaimer"><img src="https://img.shields.io/badge/use-authorized%20only-red" alt="Authorized Use Only"></a>
+</p>
 
 ---
 
-## 🚀 Quick Start
+## What is PVS?
 
-### What does PVS do?
-If you are new to cybersecurity tools, here is how PVS helps you:
-1. **Finds Active Devices:** It checks if target computers/devices on your network are online.
-2. **Checks Open Doors (Ports):** It scans for open communication ports and identifies what software/service is running on them.
-3. **Finds Security Bugs (Vulnerabilities):** It automatically checks if those software versions contain known security issues (called **CVEs**).
-4. **Generates Pretty Reports:** It writes a colored, interactive report page detailing the findings that you can open in any web browser.
+PVS is a command-line tool that does three things:
 
-### 📥 Installation
-Ensure you have [Python 3.10+](https://www.python.org/downloads/) installed, then open PowerShell or Command Prompt:
+1. **Discovers hosts** — Pings a target IP or entire subnet to find live devices.
+2. **Scans ports & services** — Checks which ports are open, identifies the running service, and grabs version banners.
+3. **Finds known vulnerabilities** — Looks up CVEs from the [NIST NVD](https://nvd.nist.gov/) database for every detected service.
+
+Results are displayed in a rich terminal UI and exported as **HTML**, **JSON**, or **CSV** reports.
+
+---
+
+## 📥 Installation
+
+**Requirements:** [Python 3.10+](https://www.python.org/downloads/) and pip.
 
 ```bash
 git clone https://github.com/MElsadany2165/PVS.git
@@ -48,135 +40,239 @@ cd PVS
 pip install .
 ```
 
-That's it. The `pvs` command is now available system-wide.
+Done. The `pvs` command is now available system-wide.
 
 > [!TIP]
-> **For developers** who want code changes to take effect immediately without reinstalling, use `pip install -e .` instead.
+> Developers contributing to PVS should use `pip install -e ".[dev]"` instead — editable mode lets code changes take effect instantly without reinstalling.
 
-### 🏃 Running Your First Scan
+---
+
+## 🚀 Usage
+
+### Basic Scan
 ```bash
-pvs scan 127.0.0.1
+pvs scan 192.168.1.1
 ```
 
-Scan with CVE vulnerability lookup:
+### Scan with CVE Lookup
 ```bash
-pvs scan 127.0.0.1 --cve
+pvs scan 192.168.1.1 --cve
+```
+
+### Scan a Subnet
+```bash
+pvs scan 192.168.1.0/24
+```
+
+### Scan Specific Ports
+```bash
+pvs scan 192.168.1.1 -p 22,80,443,8080
+```
+
+### Full Audit (all ports, high speed, all report formats)
+```bash
+pvs scan 192.168.1.0/24 -p all --cve -c 500 -t 1.5 -f all
+```
+
+### Look Up a Port or Service
+```bash
+pvs info 443
+pvs info ssh
 ```
 
 > [!TIP]
-> After the scan completes, check the `reports/` folder. Double-click the generated `.html` file to open a beautiful dashboard in your browser!
+> Reports are saved to the `reports/` folder automatically. Open the `.html` file in any browser for a visual dashboard.
 
 ---
 
-## ⚙️ Advanced & Technical Guide
+## 📋 Command Reference
 
-### 🏗️ Technical Architecture
-PVS utilizes Python's `asyncio` framework to handle multiple simultaneous network queries efficiently.
+### Global Options
 
-```
-                  ┌────────────────────────────────┐
-                  │          PVS Core CLI          │
-                  └───────────────┬────────────────┘
-                                  │
-                  ┌───────────────▼────────────────┐
-                  │      Host Ping Discovery       │
-                  └───────────────┬────────────────┘
-                                  │ (Only Live Hosts)
-                  ┌───────────────▼────────────────┐
-                  │    Asynchronous Port Scanner   │
-                  │   - Connection Semaphore Lock  │
-                  │   - Service Banner Grabbing    │
-                  └───────────────┬────────────────┘
-                                  │
-                  ┌───────────────▼────────────────┐
-                  │     Parallel NVD API Client    │
-                  │   - Local Cache Lookup         │
-                  │   - NVD Rate-Limit Semaphores  │
-                  └───────────────┬────────────────┘
-                                  │
-                  ┌───────────────▼────────────────┐
-                  │     Report Generation Engine   │
-                  │      (HTML, JSON, CSV)         │
-                  └────────────────────────────────┘
-```
-- **Asynchronous Semaphores:** Caps socket descriptors using `asyncio.Semaphore` to prevent OS resource exhaustion or firewall blocks.
-- **NVD API Integration:** Connects asynchronously to the NIST NVD API v2.0 with a local cache wrapper to store results and avoid API throttling.
+| Option | Description |
+|:---|:---|
+| `-V, --version` | Print PVS version |
+| `-q, --quiet` | Suppress banner and non-essential output |
+| `--log-level` | Set logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `--log-file` | Write logs to a file |
 
-### ⚡ Technical Scan Examples
+### `pvs scan` Options
 
-- **Scan a specific custom port list:**
-  ```bash
-  pvs scan 192.168.1.1 -p 22,80,443 --cve
-  ```
+| Option | Short | Description | Default |
+|:---|:---|:---|:---|
+| `target` | | IP, hostname, or CIDR range | *(required)* |
+| `--ports` | `-p` | Ports to scan — numbers, ranges, or presets | `top100` |
+| `--cve` | | Enable CVE vulnerability lookup via NIST NVD | off |
+| `--timeout` | `-t` | Connection timeout in seconds | `2.0` |
+| `--concurrency` | `-c` | Max simultaneous connections | `100` |
+| `--format` | `-f` | Report format: `html`, `json`, `csv`, or `all` | `html` |
+| `--output` | `-o` | Custom report file path | auto-generated |
+| `--nvd-api-key` | | NVD API key for faster lookups | `$NVD_API_KEY` env var |
+| `--max-cves` | | Max CVEs to return per service | `5` |
+| `--no-ping` | | Skip ping sweep — force scan all IPs | off |
+| `--no-banner-grab` | | Skip service version/banner detection | off |
+| `--yes` | `-y` | Skip confirmation prompt on large scans | off |
 
-- **Perform a full subnet scan at high speed:**
-  Scans all 65,535 TCP ports across a class C subnet using 500 concurrent connections, timeouts of 1.5 seconds, and exports all output formats (JSON, CSV, HTML):
-  ```bash
-  pvs scan 192.168.1.0/24 -p all --cve -c 500 -t 1.5 -f all
-  ```
+### Port Presets
 
-### 🎛️ Port Presets
-Instead of custom numbers, you can use these preset shortcuts for the `-p` or `--ports` flag:
-- `top20` (Scans top 20 standard ports)
-- `top100` (Scans top 100 common services)
-- `common` (Scans 1,000 standard ports)
-- `enterprise` (Scans 5,000 corporate network ports)
-- `all` (Scans full 1 to 65,535 TCP range)
+Use these with `-p` instead of manual port numbers:
 
-### 📋 CLI Command Options
-| Option | Short Flag | Description | Default |
-| :--- | :--- | :--- | :--- |
-| `--ports` | `-p` | Ports to scan (presets, numbers, or ranges e.g. `1-1024`) | `top100` |
-| `--cve` | | Enable CVE vulnerability correlation from NIST NVD | Disabled |
-| `--nvd-api-key`| | API Key for NIST NVD to increase API speed limit | None |
-| `--max-cves` | | Maximum CVEs to return per service | `5` |
-| `--concurrency`| `-c` | Maximum concurrent async socket connections | `100` |
-| `--timeout` | `-t` | Max socket response wait time in seconds | `2.0` |
-| `--format` | `-f` | Export reports formats (`html`, `json`, `csv`, `all`) | `html` |
-| `--output` | `-o` | Custom filepath prefix to write the scan reports | Auto-generated |
-| `--quiet` | `-q` | Silent execution (runs scan without prints) | Disabled |
-| `--no-ping` | | Skip host discovery ping sweep (forces scanning all hosts) | Disabled |
-| `--no-banner-grab`| | Disable service version/banner extraction | Disabled |
+| Preset | Ports |
+|:---|:---|
+| `top20` | Top 20 most common |
+| `top100` | Top 100 services |
+| `common` | 1,000 standard ports |
+| `enterprise` | 5,000 enterprise ports |
+| `all` | Full TCP range (1–65,535) |
 
 ---
 
-### 🔑 NIST NVD API Key Integration
-The NIST NVD API throttles unauthenticated requests. For large scans, you should register for a free API key to speed up CVE checks:
-1. Request a free API Key from the [NVD Developer Portal](https://nvd.nist.gov/developers/request-an-api-key).
-2. Set it in your environment before running scans:
-   - **Windows PowerShell:**
-     ```powershell
-     $env:NVD_API_KEY="your_api_key"
-     ```
-   - **Linux/macOS Bash:**
-     ```bash
-     export NVD_API_KEY="your_api_key"
-     ```
-   Alternatively, pass it directly with the `--nvd-api-key` argument.
+## 🖥️ Screenshots
+
+### CLI — Live Scan Progress
+The terminal displays host discovery, async scan progress bars, and structured audit tables:
+
+<p align="center">
+  <img src="docs/screenshots/pvs_full_scan_2.png" alt="Scan progress bars" width="700">
+</p>
+
+### CLI — Port & Service Audit Results
+Detailed per-host tables showing open ports, service names, versions, and captured banners:
+
+<p align="center">
+  <img src="docs/screenshots/pvs_full_scan_3.png" alt="Port audit results" width="700">
+</p>
+
+### HTML Report — Dashboard
+Beautiful dark-themed report with scan summary and service breakdown:
+
+<p align="center">
+  <img src="docs/screenshots/html_report_2.png" alt="HTML report header" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/html_report_1.png" alt="HTML report services table" width="700">
+</p>
+
+### HTML Report — CVE Vulnerability Cards
+Each CVE includes severity rating, CVSS score, description, and attack vector:
+
+<p align="center">
+  <img src="docs/screenshots/html_report_4.png" alt="CVE vulnerability cards" width="700">
+</p>
 
 ---
 
-### 🛠️ Developer & Test Guide
-If you want to run tests or modify the scanner code:
+## 🔑 NVD API Key (Optional)
 
-1. **Install with dev dependencies (editable mode):**
-   ```bash
-   pip install -e ".[dev]"
+The NIST NVD throttles unauthenticated requests. For large scans, get a **free** API key to remove the rate limit:
+
+1. Register at the [NVD Developer Portal](https://nvd.nist.gov/developers/request-an-api-key).
+2. Set it before scanning:
+
+   **Windows (PowerShell):**
+   ```powershell
+   $env:NVD_API_KEY="your_key_here"
    ```
 
-2. **Execute the pytest suite:**
+   **Linux / macOS:**
    ```bash
-   python -m pytest
+   export NVD_API_KEY="your_key_here"
+   ```
+
+   Or pass it inline:
+   ```bash
+   pvs scan 192.168.1.1 --cve --nvd-api-key your_key_here
    ```
 
 ---
 
-## ⚖️ Authorized Use Policy
-**WARNING:** This tool is strictly intended for **authorized network audits, ethical security testing, and educational purposes**.
-- Do not scan networks or hosts you do not own or lack explicit authorization to audit.
-- Misuse of this software may violate computer crime laws (such as the US CFAA or local equivalents). The developers assume zero liability for any damages or policy violations.
+## 🏗️ Architecture
+
+PVS is built on Python's `asyncio` for high-throughput network I/O:
+
+```
+┌──────────────────────────────────┐
+│           PVS CLI Engine         │
+└───────────────┬──────────────────┘
+                │
+┌───────────────▼──────────────────┐
+│      ICMP Host Discovery         │
+│      (Ping sweep for subnets)    │
+└───────────────┬──────────────────┘
+                │  Live hosts only
+┌───────────────▼──────────────────┐
+│    Async TCP Port Scanner        │
+│  · Semaphore-limited connections │
+│  · Service banner grabbing       │
+│  · Version fingerprinting        │
+└───────────────┬──────────────────┘
+                │
+┌───────────────▼──────────────────┐
+│    NVD CVE Lookup Client         │
+│  · Async HTTP with rate limiting │
+│  · Local result caching          │
+└───────────────┬──────────────────┘
+                │
+┌───────────────▼──────────────────┐
+│    Report Generator              │
+│  · HTML dashboard                │
+│  · JSON structured data          │
+│  · CSV spreadsheet export        │
+└──────────────────────────────────┘
+```
+
+**Key design decisions:**
+- **Semaphore-controlled concurrency** prevents OS socket exhaustion and firewall blocks.
+- **Async NVD client** with local caching avoids redundant API calls and respects rate limits.
+- **Zero external dependencies** beyond `rich` for terminal rendering — everything else is stdlib.
+
+---
+
+## 🛠️ Development
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Run the test suite
+python -m pytest
+
+# Run with coverage
+python -m pytest --cov=pvs
+```
+
+### Project Structure
+```
+PVS/
+├── pvs/
+│   ├── cli.py          # Argument parsing & command routing
+│   ├── scanner.py      # Async TCP port scanner
+│   ├── nvd_client.py   # NIST NVD API client with caching
+│   ├── reporter.py     # HTML / JSON / CSV report generation
+│   ├── display.py      # Rich terminal UI components
+│   ├── services.py     # Well-known port/service mappings
+│   └── logger.py       # Logging configuration
+├── tests/              # Test suite
+├── docs/               # Screenshots and demo reports
+├── reports/            # Generated scan reports (git-ignored)
+├── pyproject.toml      # Package configuration
+└── README.md
+```
+
+---
+
+## ⚖️ Legal Disclaimer
+
+> [!CAUTION]
+> **Authorized use only.** This tool is intended for ethical security testing, authorized network audits, and educational purposes.
+>
+> - **Do not** scan networks or systems you do not own or have explicit written permission to test.
+> - Unauthorized scanning may violate laws such as the **US CFAA**, **UK CMA**, **EU NIS Directive**, or local equivalents.
+> - The authors assume **no liability** for misuse, damages, or legal consequences.
 
 ---
 
 ## 📄 License
-MIT License - Copyright (c) 2026 Mohamed Essam Elsadany
+
+[MIT License](LICENSE) — Copyright © 2026 [Mohamed Essam Elsadany](https://github.com/MElsadany2165)
