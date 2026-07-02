@@ -159,69 +159,114 @@ class NVDClient:
             self._last_request = time.time()
 
     def _make_request(self, params: dict) -> Optional[dict]:
-        """Make a request to the NVD API."""
-        self._rate_limit_wait()
+        """Make a request to the NVD API with retry backoff."""
+        max_retries = 3
+        backoff = 2.0
 
-        query_string = urllib.parse.urlencode(params)
-        url = f"{NVD_API_BASE}?{query_string}"
+        for attempt in range(max_retries):
+            self._rate_limit_wait()
 
-        headers = {"Accept": "application/json"}
-        if self.api_key:
-            headers["apiKey"] = self.api_key
+            query_string = urllib.parse.urlencode(params)
+            url = f"{NVD_API_BASE}?{query_string}"
 
-        req = urllib.request.Request(url, headers=headers)
+            headers = {"Accept": "application/json"}
+            if self.api_key:
+                headers["apiKey"] = self.api_key
 
-        try:
-            logger.debug(f"NVD API request: {url}")
-            with urllib.request.urlopen(req, timeout=30) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                return data
-        except urllib.error.HTTPError as e:
-            if e.code == 403:
-                logger.error("NVD API rate limit exceeded. Consider using an API key.")
-            elif e.code == 404:
-                logger.debug("No CVEs found for query.")
-            else:
-                logger.error(f"NVD API HTTP error {e.code}: {e.reason}")
-        except urllib.error.URLError as e:
-            logger.error(f"NVD API connection error: {e.reason}")
-        except Exception as e:
-            logger.error(f"NVD API error: {e}")
+            req = urllib.request.Request(url, headers=headers)
+
+            try:
+                logger.debug(f"NVD API request: {url}")
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                if e.code in (403, 429, 503):
+                    if attempt < max_retries - 1:
+                        sleep_time = backoff * (2 ** attempt)
+                        logger.warning(f"NVD API rate limit or transient error {e.code}. Retrying in {sleep_time:.1f}s...")
+                        time.sleep(sleep_time)
+                        continue
+                    else:
+                        logger.error(f"NVD API error {e.code} after {max_retries} attempts.")
+                elif e.code == 404:
+                    logger.debug("No CVEs found for query.")
+                    return None
+                else:
+                    logger.error(f"NVD API HTTP error {e.code}: {e.reason}")
+                    return None
+            except urllib.error.URLError as e:
+                if attempt < max_retries - 1:
+                    sleep_time = backoff * (2 ** attempt)
+                    logger.warning(f"NVD API connection error: {e.reason}. Retrying in {sleep_time:.1f}s...")
+                    time.sleep(sleep_time)
+                    continue
+                else:
+                    logger.error(f"NVD API connection error after {max_retries} attempts: {e.reason}")
+            except Exception as e:
+                logger.error(f"NVD API error: {e}")
+                return None
 
         return None
 
     async def _make_request_async(self, params: dict) -> Optional[dict]:
-        """Asynchronously make a request to the NVD API (running blocking call in thread)."""
-        await self._async_rate_limit_wait()
+        """Asynchronously make a request to the NVD API with retry backoff."""
+        max_retries = 3
+        backoff = 2.0
 
-        query_string = urllib.parse.urlencode(params)
-        url = f"{NVD_API_BASE}?{query_string}"
+        for attempt in range(max_retries):
+            await self._async_rate_limit_wait()
 
-        headers = {"Accept": "application/json"}
-        if self.api_key:
-            headers["apiKey"] = self.api_key
+            query_string = urllib.parse.urlencode(params)
+            url = f"{NVD_API_BASE}?{query_string}"
 
-        req = urllib.request.Request(url, headers=headers)
+            headers = {"Accept": "application/json"}
+            if self.api_key:
+                headers["apiKey"] = self.api_key
 
-        def _perform_request():
+            req = urllib.request.Request(url, headers=headers)
+
+            def _perform_request():
+                try:
+                    logger.debug(f"NVD API async request: {url}")
+                    with urllib.request.urlopen(req, timeout=30) as response:
+                        return json.loads(response.read().decode("utf-8"))
+                except urllib.error.HTTPError as e:
+                    if e.code in (403, 429, 503):
+                        raise e
+                    elif e.code == 404:
+                        logger.debug("No CVEs found for query.")
+                        return None
+                    else:
+                        logger.error(f"NVD API HTTP error {e.code}: {e.reason}")
+                        return None
+                except urllib.error.URLError as e:
+                    raise e
+                except Exception as e:
+                    logger.error(f"NVD API error: {e}")
+                    return None
+
             try:
-                logger.debug(f"NVD API async request: {url}")
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    return json.loads(response.read().decode("utf-8"))
+                res = await asyncio.to_thread(_perform_request)
+                return res
             except urllib.error.HTTPError as e:
-                if e.code == 403:
-                    logger.error("NVD API rate limit exceeded. Consider using an API key.")
-                elif e.code == 404:
-                    logger.debug("No CVEs found for query.")
+                # Retriable errors
+                if attempt < max_retries - 1:
+                    sleep_time = backoff * (2 ** attempt)
+                    logger.warning(f"NVD API async rate limit or transient error {e.code}. Retrying in {sleep_time:.1f}s...")
+                    await asyncio.sleep(sleep_time)
                 else:
-                    logger.error(f"NVD API HTTP error {e.code}: {e.reason}")
+                    logger.error(f"NVD API error {e.code} after {max_retries} attempts.")
+                    return None
             except urllib.error.URLError as e:
-                logger.error(f"NVD API connection error: {e.reason}")
-            except Exception as e:
-                logger.error(f"NVD API error: {e}")
-            return None
+                if attempt < max_retries - 1:
+                    sleep_time = backoff * (2 ** attempt)
+                    logger.warning(f"NVD API async connection error: {e.reason}. Retrying in {sleep_time:.1f}s...")
+                    await asyncio.sleep(sleep_time)
+                else:
+                    logger.error(f"NVD API connection error after {max_retries} attempts: {e.reason}")
+                    return None
 
-        return await asyncio.to_thread(_perform_request)
+        return None
 
     def _parse_cve(self, cve_item: dict) -> CVEEntry:
         """Parse a CVE item from the NVD API response."""

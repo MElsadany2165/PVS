@@ -32,3 +32,52 @@ async def test_nvd_client_cache_and_cpe_async():
     cves = await nvd.lookup_service_cves_async("redis", "7.2.3")
     assert len(cves) == 1
     assert cves[0].cve_id == "CVE-2023-1234"
+
+
+def test_nvd_client_retry_sync():
+    nvd = NVDClient(rate_limit=0.01)
+    
+    import urllib.error
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.read.return_value = b'{"vulnerabilities": []}'
+    
+    call_count = 0
+    def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise urllib.error.HTTPError("http://nvd", 403, "Forbidden", {}, None)
+        return mock_response
+
+    with patch("urllib.request.urlopen", side_effect=side_effect):
+        with patch("time.sleep") as mock_sleep:
+            cves = nvd.search_by_keyword("redis")
+            assert call_count == 2
+            assert cves == []
+            mock_sleep.assert_any_call(2.0)
+
+
+@pytest.mark.asyncio
+async def test_nvd_client_retry_async():
+    nvd = NVDClient(rate_limit=0.01)
+
+    import urllib.error
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.read.return_value = b'{"vulnerabilities": []}'
+    
+    call_count = 0
+    def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise urllib.error.HTTPError("http://nvd", 403, "Forbidden", {}, None)
+        return mock_response
+
+    with patch("urllib.request.urlopen", side_effect=side_effect):
+        with patch("asyncio.sleep") as mock_sleep:
+            cves = await nvd.search_by_keyword_async("redis")
+            assert call_count == 2
+            assert cves == []
+            mock_sleep.assert_any_call(2.0)
+
+

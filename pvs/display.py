@@ -23,13 +23,15 @@ from rich.text import Text
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 from rich import box
 
+from pvs import __version__
+
 console = Console(force_terminal=True)
 
 BANNER_TEXT = (
     "\n"
     "  [bold bright_cyan]██████╗ ██╗   ██╗███████╗[/]\n"
     "  [bold bright_cyan]██╔══██╗██║   ██║██╔════╝[/]    [bold]Personal Vulnerability Scanner[/]\n"
-    "  [bold bright_cyan]██████╔╝██║   ██║███████╗[/]    [dim]v1.0.1[/]\n"
+    f"  [bold bright_cyan]██████╔╝██║   ██║███████╗[/]    [dim]v{__version__}[/]\n"
     "  [bold bright_cyan]██╔═══╝ ╚██╗ ██╔╝╚════██║[/]\n"
     "  [bold bright_cyan]██║      ╚████╔╝ ███████║[/]    [dim]Ethical Security Testing[/]\n"
     "  [bold bright_cyan]╚═╝       ╚═══╝  ╚══════╝[/]\n"

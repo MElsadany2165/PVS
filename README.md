@@ -3,7 +3,7 @@
 ```text
   ██████╗ ██╗   ██╗███████╗
   ██╔══██╗██║   ██║██╔════╝    Personal Vulnerability Scanner
-  ██████╔╝██║   ██║███████╗    v1.0.1
+  ██████╔╝██║   ██║███████╗    v1.1.0
   ██╔═══╝ ╚██╗ ██╔╝╚════██║
   ██║      ╚████╔╝ ███████║    Ethical Security Testing
   ╚═╝       ╚═══╝  ╚══════╝
@@ -30,7 +30,7 @@ PVS automatically generates beautiful, responsive slate-cyan HTML dashboards sum
 
 ---
 
-## 🚀 Beginner Quick-Start (Non-Technical)
+## 🚀 Quick Start
 
 ### What does PVS do?
 If you are new to cybersecurity tools, here is how PVS helps you:
@@ -39,47 +39,36 @@ If you are new to cybersecurity tools, here is how PVS helps you:
 3. **Finds Security Bugs (Vulnerabilities):** It automatically checks if those software versions contain known security issues (called **CVEs**).
 4. **Generates Pretty Reports:** It writes a colored, interactive report page detailing the findings that you can open in any web browser.
 
-### 📥 2-Step Setup
-Ensure you have [Python](https://www.python.org/downloads/) installed, then open PowerShell or Command Prompt and run:
+### 📥 Installation
+Ensure you have [Python 3.10+](https://www.python.org/downloads/) installed, then open PowerShell or Command Prompt:
 
-1. **Clone the code repository:**
-   ```bash
-   git clone https://github.com/MElsadany2165/PVS.git
-   cd PVS
-   ```
-
-2. **Install the scanner requirements:**
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-### 🏃 Running your first scan
-To scan your local system for common ports:
-```powershell
-py PVS scan 127.0.0.1
+```bash
+git clone https://github.com/MElsadany2165/PVS.git
+cd PVS
+pip install .
 ```
 
-To run a scan that also checks for known security vulnerabilities (CVEs):
-```powershell
-py PVS scan 127.0.0.1 --cve
-```
+That's it. The `pvs` command is now available system-wide.
 
 > [!TIP]
-> After the scan completes, check the `reports/` folder in your project directory. Double-click the generated `.html` file to open a beautiful dashboard in your browser!
+> **For developers** who want code changes to take effect immediately without reinstalling, use `pip install -e .` instead.
 
----
-
-## ⚙️ Advanced & Technical Guide (For Experts & Developers)
-
-### 📦 Optional: Install PVS as a command-line tool
-If you want to run `pvs` directly from any directory in your terminal, install it in editable mode:
+### 🏃 Running Your First Scan
 ```bash
-pip install -e .
+pvs scan 127.0.0.1
 ```
-You can now run:
+
+Scan with CVE vulnerability lookup:
 ```bash
 pvs scan 127.0.0.1 --cve
 ```
+
+> [!TIP]
+> After the scan completes, check the `reports/` folder. Double-click the generated `.html` file to open a beautiful dashboard in your browser!
+
+---
+
+## ⚙️ Advanced & Technical Guide
 
 ### 🏗️ Technical Architecture
 PVS utilizes Python's `asyncio` framework to handle multiple simultaneous network queries efficiently.
@@ -116,14 +105,14 @@ PVS utilizes Python's `asyncio` framework to handle multiple simultaneous networ
 ### ⚡ Technical Scan Examples
 
 - **Scan a specific custom port list:**
-  ```powershell
-  py PVS scan 192.168.1.1 -p 22,80,443 --cve
+  ```bash
+  pvs scan 192.168.1.1 -p 22,80,443 --cve
   ```
 
 - **Perform a full subnet scan at high speed:**
   Scans all 65,535 TCP ports across a class C subnet using 500 concurrent connections, timeouts of 1.5 seconds, and exports all output formats (JSON, CSV, HTML):
-  ```powershell
-  py PVS scan 192.168.1.0/24 -p all --cve -c 500 -t 1.5 -f all
+  ```bash
+  pvs scan 192.168.1.0/24 -p all --cve -c 500 -t 1.5 -f all
   ```
 
 ### 🎛️ Port Presets
@@ -170,13 +159,13 @@ The NIST NVD API throttles unauthenticated requests. For large scans, you should
 ### 🛠️ Developer & Test Guide
 If you want to run tests or modify the scanner code:
 
-1. **Install development dependencies:**
-   ```powershell
-   pip install -e .[dev]
+1. **Install with dev dependencies (editable mode):**
+   ```bash
+   pip install -e ".[dev]"
    ```
 
 2. **Execute the pytest suite:**
-   ```powershell
+   ```bash
    python -m pytest
    ```
 
