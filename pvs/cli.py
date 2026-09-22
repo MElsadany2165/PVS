@@ -12,10 +12,11 @@ import datetime
 import os
 import sys
 import time
+import webbrowser
 
 from pvs import __version__
-from pvs.scanner import resolve_targets, parse_ports, scan_host, filter_live_hosts
-from pvs.nvd_client import NVDClient
+from pvs.scanner import resolve_targets, parse_ports, scan_host, filter_live_hosts, get_local_subnet, get_local_ip
+from pvs.vuln_engine import VulnerabilityEngine, LocalVulnCache
 from pvs.reporter import (
     build_scan_data, generate_json_report,
     generate_csv_report, generate_html_report,
@@ -24,6 +25,7 @@ from pvs.display import (
     console, show_banner, show_disclaimer, show_scan_config,
     show_host_results, show_cve_results, show_summary,
     create_progress, show_warning, show_error, show_info,
+    show_post_scan_actions,
 )
 from pvs.logger import setup_logging
 
@@ -31,7 +33,7 @@ from pvs.logger import setup_logging
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pvs",
-        description="pvs - personal vulnerability scanner",
+        description="pvs - personal vulnerability scanner & remediation engine",
     )
     parser.add_argument("-V", "--version", action="version", version=f"PVS v{__version__}")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress banner and non-essential output")
@@ -41,18 +43,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # --- wizard command ---
+    subparsers.add_parser("wizard", help="Launch interactive guided security assistant")
+
+    # --- quick command ---
+    quick_parser = subparsers.add_parser("quick", help="One-command full home network scan with auto-open report")
+    quick_parser.add_argument("target", nargs="?", default=None,
+                              help="Target to scan (default: auto-detect home network)")
+
     # --- scan command ---
-    scan_parser = subparsers.add_parser("scan", help="Scan a target for open ports and services")
-    scan_parser.add_argument("target", help="Target host, IP, CIDR range, or IP range (e.g., 192.168.1.0/24)")
+    scan_parser = subparsers.add_parser("scan", help="Scan a target for open ports, services, CVEs, and remediation steps")
+    scan_parser.add_argument("target", help="Target host, IP, CIDR range, or IP range (e.g., 192.168.1.0/24, 'home', 'me')")
     scan_parser.add_argument("-p", "--ports", default="top100",
                              help="Ports to scan: number, range (1-1024), preset (top20/top100/common/enterprise/all)")
     scan_parser.add_argument("-t", "--timeout", type=float, default=2.0, help="Connection timeout in seconds")
     scan_parser.add_argument("-c", "--concurrency", type=int, default=100, help="Max concurrent connections")
     scan_parser.add_argument("--no-ping", action="store_true", help="Skip host discovery ping sweep")
     scan_parser.add_argument("--no-banner-grab", action="store_true", help="Disable service banner grabbing")
-    scan_parser.add_argument("--cve", action="store_true", help="Look up CVEs for discovered services (NVD API)")
-    scan_parser.add_argument("--nvd-api-key", help="NVD API key for faster CVE lookups")
+    scan_parser.add_argument("--cve", action="store_true", help="Look up CVEs & threats via multi-source engine (NVD + CISA KEV + OSV)")
+    scan_parser.add_argument("--fix", "--remediation", dest="fix", action="store_true", help="Display step-by-step fix procedures in CLI output")
+    scan_parser.add_argument("--open", action="store_true", help="Automatically open generated HTML report in web browser when complete")
+    scan_parser.add_argument("--nvd-api-key", help="NVD API key for higher rate limits")
     scan_parser.add_argument("--max-cves", type=int, default=5, help="Max CVEs to retrieve per service")
+    scan_parser.add_argument("--no-cache", action="store_true", help="Bypass local SQLite vulnerability cache")
+    scan_parser.add_argument("--clear-cache", action="store_true", help="Clear local SQLite vulnerability cache before scanning")
     scan_parser.add_argument("-o", "--output", help="Output report file path")
     scan_parser.add_argument("-f", "--format", default="html", choices=["json", "csv", "html", "all"],
                              help="Report format (default: html)")
@@ -62,11 +76,20 @@ def build_parser() -> argparse.ArgumentParser:
     info_parser = subparsers.add_parser("info", help="Show information about a specific port or service")
     info_parser.add_argument("query", help="Port number or service name to look up")
 
+    # --- shortcut command ---
+    subparsers.add_parser("shortcut", help="Create a Desktop shortcut for 1-click launching PVS")
+
     return parser
 
 
 async def run_scan(args):
     """Execute the scan command."""
+    # Handle cache clearing if requested
+    if getattr(args, "clear_cache", False):
+        cache = LocalVulnCache()
+        cache.clear()
+        show_info("Local SQLite vulnerability cache cleared.")
+
     # Suppress Windows ProactorEventLoop WinError 10054 connection reset callback noise
     try:
         loop = asyncio.get_running_loop()
@@ -81,10 +104,23 @@ async def run_scan(args):
     except Exception:
         pass
 
-    # Resolve targets
-    targets = resolve_targets(args.target)
+    # Resolve smart targets like 'home', 'network', 'me', 'local'
+    target_input = args.target.strip().lower()
+    if target_input in ("home", "network", "router"):
+        target_str = get_local_subnet()
+        show_info(f"Auto-detected home network target: {target_str}")
+    elif target_input in ("me", "local", "localhost"):
+        target_str = "127.0.0.1"
+        show_info(f"Targeting local computer: {target_str}")
+    else:
+        target_str = args.target
+
+    targets = resolve_targets(target_str)
     if not targets:
         show_error(f"Could not resolve target: {args.target}")
+        persona = getattr(args, "persona", "")
+        if persona in ("home", "student"):
+            console.print("  [dim]💡 Make sure you're connected to Wi-Fi or Ethernet, then try again.[/]")
         return 1
 
     # Parse ports
@@ -99,11 +135,17 @@ async def run_scan(args):
         targets = await filter_live_hosts(targets, concurrency=50)
         if not targets:
             show_error("No live hosts discovered (all pings failed). Use --no-ping to force scan.")
+            persona = getattr(args, "persona", "")
+            if persona in ("home", "student"):
+                console.print("  [dim]💡 No devices responded on your network. This could mean:[/]")
+                console.print("  [dim]   • Your firewall is blocking ping requests[/]")
+                console.print("  [dim]   • Devices are turned off or not connected[/]")
+                console.print("  [dim]   Try scanning just this computer: [bold]pvs quick me[/][/]")
             return 1
         show_info(f"Found {len(targets)} live host(s).")
 
     # Show config
-    show_scan_config(args.target, len(ports), {
+    show_scan_config(target_str, len(ports), {
         "timeout": args.timeout,
         "concurrency": args.concurrency,
         "banners": not args.no_banner_grab,
@@ -149,7 +191,7 @@ async def run_scan(args):
     for hr in host_results:
         show_host_results(hr)
 
-    # CVE lookup
+    # Multi-Source CVE lookup with SQLite Caching & CISA KEV
     cve_results = {}
     if args.cve:
         open_services = []
@@ -159,38 +201,33 @@ async def run_scan(args):
                     open_services.append((hr.ip, pr))
 
         if open_services:
-            nvd = NVDClient(api_key=args.nvd_api_key or os.environ.get("NVD_API_KEY"))
-            show_info(f"Looking up CVEs for {len(open_services)} service(s)...")
+            engine = VulnerabilityEngine(
+                nvd_api_key=args.nvd_api_key or os.environ.get("NVD_API_KEY"),
+                use_cache=not getattr(args, "no_cache", False)
+            )
+            show_info(f"Looking up CVEs & threats for {len(open_services)} service(s)...")
 
-            seen_services = {}
-            
             async def _lookup(ip, pr, task_id):
-                svc_key = f"{pr.service}:{pr.version}"
-                if svc_key in seen_services:
-                    cves = seen_services[svc_key]
-                else:
-                    cves = await nvd.lookup_service_cves_async(
-                        pr.service, pr.version, banner=pr.banner, max_results=args.max_cves
-                    )
-                    seen_services[svc_key] = cves
-                
+                cves = await engine.lookup_service_cves_async(
+                    pr.service, pr.version, banner=pr.banner, max_results=args.max_cves
+                )
                 if cves:
                     key = f"{ip}:{pr.port}"
                     cve_results[key] = cves
                 progress.update(task_id, advance=1)
 
             with create_progress() as progress:
-                task = progress.add_task("CVE Lookup", total=len(open_services))
+                task = progress.add_task("Threat & Vulnerability Assessment", total=len(open_services))
                 tasks = [_lookup(ip, pr, task) for ip, pr in open_services]
                 await asyncio.gather(*tasks)
 
-            show_cve_results(cve_results)
+            show_cve_results(cve_results, show_remediation=getattr(args, "fix", False))
 
     total_time = time.time() - start_time
     show_summary(host_results, total_time)
 
     # Generate reports
-    scan_data = build_scan_data(args.target, host_results, cve_results)
+    scan_data = build_scan_data(target_str, host_results, cve_results)
 
     if args.output:
         base = args.output.rsplit(".", 1)[0] if "." in args.output else args.output
@@ -204,6 +241,7 @@ async def run_scan(args):
         base = f"reports/PVS-{timestamp}"
 
     fmt = args.format
+    html_path = None
 
     if fmt in ("json", "all"):
         generate_json_report(scan_data, f"{base}.json")
@@ -212,10 +250,59 @@ async def run_scan(args):
         generate_csv_report(scan_data, f"{base}.csv")
         show_info(f"CSV report saved: {base}.csv")
     if fmt in ("html", "all"):
-        generate_html_report(scan_data, f"{base}.html")
-        show_info(f"HTML report saved: {base}.html")
+        html_path = f"{base}.html"
+        generate_html_report(scan_data, html_path)
+        show_info(f"HTML report saved: {html_path}")
+
+    # Auto-open HTML report in web browser if requested
+    if getattr(args, "open", False) and html_path:
+        abs_html_path = os.path.abspath(html_path)
+        show_info(f"Launching visual report in default browser: {abs_html_path}")
+        webbrowser.open(f"file://{abs_html_path}")
+
+    # Post-scan action summary
+    show_post_scan_actions(cve_results, html_path)
 
     return 0
+
+
+def run_quick(args):
+    """Execute the quick one-command scan."""
+    quick_args = argparse.Namespace()
+
+    # Determine target
+    target = getattr(args, "target", None)
+    if not target:
+        target = get_local_subnet()
+        show_info(f"Auto-detected home network: {target}")
+    elif target.lower() in ("me", "local", "localhost"):
+        target = "127.0.0.1"
+    elif target.lower() in ("home", "network", "router"):
+        target = get_local_subnet()
+
+    quick_args.target = target
+    quick_args.quiet = False
+    quick_args.log_level = "WARNING"
+    quick_args.log_file = None
+    quick_args.command = "scan"
+    quick_args.cve = True
+    quick_args.fix = True
+    quick_args.no_ping = False
+    quick_args.no_banner_grab = False
+    quick_args.nvd_api_key = os.environ.get("NVD_API_KEY")
+    quick_args.max_cves = 5
+    quick_args.output = None
+    quick_args.yes = True
+    quick_args.ports = "common"
+    quick_args.timeout = 2.0
+    quick_args.concurrency = 100
+    quick_args.format = "html"
+    quick_args.open = True
+    quick_args.no_cache = False
+    quick_args.clear_cache = False
+    quick_args.persona = "quick"
+
+    return quick_args
 
 
 def run_info(args):
@@ -241,21 +328,71 @@ def run_info(args):
             show_error(f"No service found matching: {query}")
 
 
+def run_shortcut(args):
+    """Create a Windows Desktop shortcut pointing to PVS.bat for 1-click execution."""
+    if sys.platform != "win32":
+        show_info("Desktop shortcut creation is currently supported on Windows.")
+        return 0
+
+    import subprocess
+    bat_path = os.path.abspath("PVS.bat")
+    if not os.path.exists(bat_path):
+        # Create PVS.bat if missing
+        try:
+            with open(bat_path, "w", encoding="utf-8") as f:
+                f.write("@echo off\ntitle PVS - Personal Vulnerability Scanner Assistant\ncd /d \"%~dp0\"\nif exist \"venv\\Scripts\\python.exe\" (\n    venv\\Scripts\\python.exe -m pvs wizard\n) else (\n    python -m pvs wizard\n)\npause\n")
+        except Exception as e:
+            show_error(f"Could not create PVS.bat: {e}")
+            return 1
+
+    ps_script = f"""
+    $WshShell = New-Object -ComObject WScript.Shell
+    $DesktopPath = [System.Environment]::GetFolderPath('Desktop')
+    $Shortcut = $WshShell.CreateShortcut("$DesktopPath\\PVS Security Assistant.lnk")
+    $Shortcut.TargetPath = "{bat_path}"
+    $Shortcut.WorkingDirectory = "{os.path.dirname(bat_path)}"
+    $Shortcut.IconLocation = "shell32.dll,48"
+    $Shortcut.Description = "PVS - Personal Vulnerability Scanner"
+    $Shortcut.Save()
+    """
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps_script], check=True, capture_output=True)
+        show_info("Created Desktop shortcut: 'PVS Security Assistant.lnk'")
+        console.print("  [bright_green]✅[/] You can now double-click 'PVS Security Assistant' on your Desktop to run PVS anytime!")
+    except Exception as e:
+        show_error(f"Could not create shortcut: {e}")
+        return 1
+    return 0
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
 
     setup_logging(args.log_level, getattr(args, "log_file", None))
 
+    # If no command passed, launch interactive wizard
+    if not args.command or args.command == "wizard":
+        from pvs.wizard import run_wizard_interactive
+        wizard_args = run_wizard_interactive()
+        try:
+            return asyncio.run(run_scan(wizard_args))
+        except KeyboardInterrupt:
+            show_info("\nScan interrupted by user.")
+            return 130
+
     if not args.quiet:
         show_banner()
         show_disclaimer()
 
-    if not args.command:
-        parser.print_help()
-        return 0
-
-    if args.command == "scan":
+    if args.command == "quick":
+        quick_args = run_quick(args)
+        try:
+            return asyncio.run(run_scan(quick_args))
+        except KeyboardInterrupt:
+            show_info("\nScan interrupted by user.")
+            return 130
+    elif args.command == "scan":
         try:
             return asyncio.run(run_scan(args))
         except KeyboardInterrupt:
@@ -263,9 +400,12 @@ def main():
             return 130
     elif args.command == "info":
         return run_info(args)
+    elif args.command == "shortcut":
+        return run_shortcut(args)
 
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main() or 0)
+

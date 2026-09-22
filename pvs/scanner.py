@@ -40,6 +40,31 @@ class HostResult:
     ports: list = field(default_factory=list)
 
 
+def get_local_ip() -> str:
+    """Auto-detect current active IP address on the primary network interface."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Doesn't actually send packets, just determines outgoing interface
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+
+def get_local_subnet() -> str:
+    """Auto-detect local network CIDR subnet (e.g., 192.168.1.0/24)."""
+    ip = get_local_ip()
+    if ip == "127.0.0.1":
+        return "127.0.0.1"
+    parts = ip.split(".")
+    if len(parts) == 4:
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+    return ip
+
+
 def resolve_targets(target: str) -> list[str]:
     """Resolve target spec into IP list. Supports IP, CIDR, hostname, range."""
     targets = []

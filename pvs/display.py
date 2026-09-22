@@ -3,6 +3,8 @@
 
 """
 Rich CLI Display - Beautiful terminal output using the Rich library.
+Supports CISA KEV badges, Step-by-Step Remediation procedure panels,
+and Post-Scan Action Summary for all user personas.
 """
 import sys
 import os
@@ -29,19 +31,19 @@ console = Console(force_terminal=True)
 
 BANNER_TEXT = (
     "\n"
-    "  [bold bright_cyan]██████╗ ██╗   ██╗███████╗[/]\n"
-    "  [bold bright_cyan]██╔══██╗██║   ██║██╔════╝[/]    [bold]Personal Vulnerability Scanner[/]\n"
-    f"  [bold bright_cyan]██████╔╝██║   ██║███████╗[/]    [dim]v{__version__}[/]\n"
-    "  [bold bright_cyan]██╔═══╝ ╚██╗ ██╔╝╚════██║[/]\n"
-    "  [bold bright_cyan]██║      ╚████╔╝ ███████║[/]    [dim]Ethical Security Testing[/]\n"
-    "  [bold bright_cyan]╚═╝       ╚═══╝  ╚══════╝[/]\n"
+    "  [bold cyan]██████╗ ██╗   ██╗███████╗[/]\n"
+    "  [bold cyan]██╔══██╗██║   ██║██╔════╝[/]    [bold white]Personal Vulnerability Scanner[/]\n"
+    f"  [bold cyan]██████╔╝██║   ██║███████╗[/]    [dim]v{__version__}[/]\n"
+    "  [bold cyan]██╔═══╝ ╚██╗ ██╔╝╚════██║[/]\n"
+    "  [bold cyan]██║      ╚████╔╝ ███████║[/]    [dim]Ethical Security Testing & Remediation Engine[/]\n"
+    "  [bold cyan]╚═╝       ╚═══╝  ╚══════╝[/]\n"
 )
 
 SEVERITY_STYLES = {
-    "CRITICAL": "bold bright_red",
-    "HIGH": "bold red",
-    "MEDIUM": "bold yellow",
-    "LOW": "bold green",
+    "CRITICAL": "bold red",
+    "HIGH": "red",
+    "MEDIUM": "yellow",
+    "LOW": "green",
     "UNKNOWN": "dim",
 }
 
@@ -62,6 +64,7 @@ def show_disclaimer():
         disclaimer_text,
         title="[bold red]POLICY & AUDIT DISCLAIMER[/]",
         border_style="red",
+        box=box.ROUNDED,
         padding=(0, 2),
         expand=False
     ))
@@ -71,26 +74,31 @@ def show_scan_config(target, ports_count, options):
     """Display scan configuration in a modern profile layout."""
     config_text = Text()
     config_text.append("  Target host      : ", style="dim")
-    config_text.append(f"{target}\n", style="bold bright_cyan")
+    config_text.append(f"{target}\n", style="bold white")
     config_text.append("  Scan scope       : ", style="dim")
-    config_text.append(f"{ports_count} ports\n", style="bold")
+    config_text.append(f"{ports_count} ports\n", style="bold white")
     config_text.append("  Response timeout : ", style="dim")
-    config_text.append(f"{options.get('timeout', 2.0)}s\n", style="bold")
+    config_text.append(f"{options.get('timeout', 2.0)}s\n", style="bold white")
     config_text.append("  Concurrent flows : ", style="dim")
-    config_text.append(f"{options.get('concurrency', 100)}\n", style="bold")
+    config_text.append(f"{options.get('concurrency', 100)}\n", style="bold white")
     config_text.append("  Banner recon     : ", style="dim")
-    config_text.append(f"{'Enabled' if options.get('banners', True) else 'Disabled'}\n", style="bold")
+    config_text.append(f"{'Enabled' if options.get('banners', True) else 'Disabled'}\n", style="bold white")
     config_text.append("  Vulnerability DB : ", style="dim")
-    config_text.append(f"{'Connected' if options.get('cve', False) else 'None'}\n", style="bold")
+    config_text.append(f"{'Multi-Source Engine (NVD + CISA KEV + OSV)' if options.get('cve', False) else 'None'}\n", style="bold white")
 
-    console.print(Panel(config_text, title="[bold bright_cyan]Scan Configuration[/]",
-                        border_style="bright_blue", padding=(0, 1)))
+    console.print(Panel(
+        config_text,
+        title="[bold cyan]Scan Configuration[/]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1)
+    ))
 
 
 def show_host_results(host_result):
     """Display scan results for a single target host."""
     if not host_result.ports:
-        console.print(f"\n  Host {host_result.ip} - no open ports detected in scope")
+        console.print(f"\n  [dim]Host {host_result.ip} - no open ports detected in scope[/]")
         return
 
     # Host header
@@ -101,19 +109,19 @@ def show_host_results(host_result):
     table = Table(
         title=f"Host Audit Details: {host_label}",
         box=box.ROUNDED,
-        border_style="bright_blue",
-        header_style="bold bright_cyan",
+        border_style="cyan",
+        header_style="bold cyan",
         show_lines=False,
         padding=(0, 1),
     )
-    table.add_column("Port", style="bold bright_cyan", width=8, justify="right")
+    table.add_column("Port", style="bold white", width=8, justify="right")
     table.add_column("State", width=8)
-    table.add_column("Service", style="bold", width=16)
+    table.add_column("Service", style="bold white", width=16)
     table.add_column("Version", width=30)
     table.add_column("Captured Banner", style="dim", max_width=40, overflow="ellipsis")
 
     for port in host_result.ports:
-        state_text = Text("open", style="bold green")
+        state_text = Text("open", style="green")
         table.add_row(
             str(port.port), state_text,
             port.service, port.version,
@@ -122,22 +130,31 @@ def show_host_results(host_result):
 
     console.print()
     console.print(table)
-    console.print(f"  Scan completed in {host_result.scan_time:.2f}s")
+    console.print(f"  [dim]Scan completed in {host_result.scan_time:.2f}s[/]")
 
 
-def show_cve_results(cve_results: dict):
-    """Display NVD CVE lookup results."""
+def show_cve_results(cve_results: dict, show_remediation: bool = False):
+    """Display multi-source CVE lookup results and optional single service remediation procedure."""
     if not cve_results:
-        console.print("\n  No security vulnerabilities identified in service signatures.")
+        console.print("\n  [dim]No security vulnerabilities identified in service signatures.[/]")
         return
 
     console.print()
     total = sum(len(v) for v in cve_results.values())
+    kev_count = sum(
+        1 for cves in cve_results.values() for c in cves if getattr(c, "is_kev", False) or (isinstance(c, dict) and c.get("is_kev"))
+    )
+
+    summary_text = f"Identified {total} potential vulnerabilities across {len(cve_results)} active service(s)."
+    if kev_count > 0:
+        summary_text += f"\n[bold red]WARNING: {kev_count} vulnerability(ies) are actively exploited in the wild (CISA KEV).[/]"
+
     console.print(Panel(
-        f"Identified {total} potential vulnerabilities across "
-        f"{len(cve_results)} active service(s).",
-        title="[!] Vulnerability Assessment Summary",
-        border_style="yellow",
+        summary_text,
+        title="[bold cyan]Vulnerability Assessment Summary[/]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1),
     ))
 
     for key, cves in cve_results.items():
@@ -146,32 +163,72 @@ def show_cve_results(cve_results: dict):
 
         table = Table(
             title=f"Vulnerabilities for {key}",
-            box=box.SIMPLE_HEAVY,
-            border_style="yellow",
-            header_style="bold",
-            show_lines=True,
+            box=box.ROUNDED,
+            border_style="cyan",
+            header_style="bold cyan",
+            show_lines=False,
         )
-        table.add_column("CVE ID", style="bold cyan", width=18)
+        table.add_column("CVE ID", style="bold white", width=18)
         table.add_column("Severity", width=12, justify="center")
         table.add_column("CVSS Score", width=12, justify="center")
-        table.add_column("Description", max_width=60)
-        table.add_column("Published", width=12)
+        table.add_column("Threat Status", width=18, justify="center")
+        table.add_column("Description", max_width=50)
 
-        for cve in cves[:10]:  # Limit display
-            sev_style = SEVERITY_STYLES.get(cve.severity, "dim")
-            score_style = "bold bright_red" if cve.score >= 9.0 else \
-                          "bold red" if cve.score >= 7.0 else \
-                          "bold yellow" if cve.score >= 4.0 else "bold green"
+        for cve in cves[:10]:
+            cve_id = cve.cve_id if hasattr(cve, "cve_id") else cve.get("cve_id", "UNKNOWN")
+            severity = cve.severity if hasattr(cve, "severity") else cve.get("severity", "UNKNOWN")
+            score = cve.score if hasattr(cve, "score") else cve.get("score", 0.0)
+            description = cve.description if hasattr(cve, "description") else cve.get("description", "")
+            is_kev = cve.is_kev if hasattr(cve, "is_kev") else cve.get("is_kev", False)
+
+            sev_style = SEVERITY_STYLES.get(severity, "dim")
+            score_style = "bold red" if score >= 7.0 else "bold yellow" if score >= 4.0 else "green"
+
+            status_text = Text("KEV EXPLOITED", style="bold red") if is_kev else Text("Standard CVE", style="dim")
 
             table.add_row(
-                Text(cve.cve_id, style="bold cyan"),
-                Text(cve.severity, style=sev_style),
-                Text(f"{cve.score:.1f}", style=score_style),
-                cve.description[:120],
-                cve.published,
+                Text(cve_id, style="white"),
+                Text(severity, style=sev_style),
+                Text(f"{score:.1f}", style=score_style),
+                status_text,
+                description[:120],
             )
 
         console.print(table)
+
+        # Print ONE clean service remediation procedure panel per service
+        if show_remediation and cves:
+            first_cve = cves[0]
+            rem = first_cve.remediation if hasattr(first_cve, "remediation") else first_cve.get("remediation")
+            if rem:
+                summary_desc = rem.summary if hasattr(rem, "summary") else rem.get("summary", "")
+                steps_list = rem.steps if hasattr(rem, "steps") else rem.get("steps", [])
+
+                rem_text = Text()
+                rem_text.append(f"{summary_desc}\n\n", style="dim")
+
+                for step in steps_list[:3]:
+                    s_num = step.step_number if hasattr(step, "step_number") else step.get("step_number", 1)
+                    s_title = step.title if hasattr(step, "title") else step.get("title", "")
+                    s_desc = step.description if hasattr(step, "description") else step.get("description", "")
+                    s_lin = (step.command_linux if hasattr(step, "command_linux") else step.get("command_linux")) or ""
+                    s_win = (step.command_windows if hasattr(step, "command_windows") else step.get("command_windows")) or ""
+
+                    rem_text.append(f"Step {s_num}: {s_title}\n", style="bold white")
+                    rem_text.append(f"  {s_desc}\n", style="dim")
+                    if s_lin:
+                        rem_text.append(f"  Linux   : {s_lin}\n", style="white")
+                    if s_win:
+                        rem_text.append(f"  Windows : {s_win}\n", style="white")
+                    rem_text.append("\n")
+
+                console.print(Panel(
+                    rem_text,
+                    title=f"[bold cyan]Remediation Procedure for {key}[/]",
+                    border_style="cyan",
+                    box=box.ROUNDED,
+                    padding=(0, 1),
+                ))
 
 
 def show_summary(host_results, scan_time: float):
@@ -180,23 +237,78 @@ def show_summary(host_results, scan_time: float):
     hosts_up = sum(1 for h in host_results if h.is_up)
 
     summary = Text()
-    summary.append("\n  Scan Execution Complete\n\n", style="bold green")
+    summary.append("  Scan Execution Complete\n\n", style="bold white")
     summary.append(f"  Hosts scanned:  {len(host_results)}\n", style="dim")
-    summary.append(f"  Active hosts:   {hosts_up}\n", style="bold")
-    summary.append(f"  Open ports:     {total_ports}\n", style="bold bright_cyan")
+    summary.append(f"  Active hosts:   {hosts_up}\n", style="bold white")
+    summary.append(f"  Open ports:     {total_ports}\n", style="bold white")
     summary.append(f"  Execution time: {scan_time:.2f}s\n", style="dim")
 
-    console.print(Panel(summary, title="Scan Summary",
-                        border_style="green", padding=(0, 1)))
+    console.print(Panel(
+        summary,
+        title="[bold cyan]Scan Summary[/]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1)
+    ))
+
+
+def show_post_scan_actions(cve_results: dict, html_path: str = None):
+    """Display concise action summary after scan completion."""
+    critical = 0
+    high = 0
+    medium = 0
+    low = 0
+    total_cves = 0
+
+    for cves in cve_results.values():
+        for cve in cves:
+            total_cves += 1
+            sev = (cve.severity if hasattr(cve, "severity") else cve.get("severity", "")).upper()
+            if sev == "CRITICAL":
+                critical += 1
+            elif sev == "HIGH":
+                high += 1
+            elif sev == "MEDIUM":
+                medium += 1
+            elif sev == "LOW":
+                low += 1
+
+    action_text = Text()
+
+    if html_path:
+        action_text.append(f"  Audit report generated: {html_path}\n\n", style="bold white")
+
+    if total_cves == 0:
+        action_text.append("  No security vulnerabilities detected across target services.\n", style="green")
+    else:
+        action_text.append(f"  Found {total_cves} vulnerability issue(s):\n\n", style="bold white")
+        if critical > 0:
+            action_text.append(f"    • {critical} Critical severity\n", style="bold red")
+        if high > 0:
+            action_text.append(f"    • {high} High severity\n", style="red")
+        if medium > 0:
+            action_text.append(f"    • {medium} Medium severity\n", style="yellow")
+        if low > 0:
+            action_text.append(f"    • {low} Low severity\n", style="green")
+
+        action_text.append("\n  Step-by-step fix procedures are provided in the HTML report.\n", style="dim")
+
+    console.print(Panel(
+        action_text,
+        title="[bold cyan]Action Summary[/]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1),
+    ))
 
 
 def create_progress():
-    """Create a modern progress bar for target auditing."""
+    """Create a clean progress bar for target auditing."""
     return Progress(
-        SpinnerColumn(style="bright_cyan"),
-        TextColumn("[bold bright_cyan]{task.description}"),
-        BarColumn(bar_width=40, style="bright_blue", complete_style="bright_cyan"),
-        TextColumn("[bold]{task.completed}/{task.total}"),
+        SpinnerColumn(style="cyan"),
+        TextColumn("[dim]{task.description}"),
+        BarColumn(bar_width=35, style="dim", complete_style="cyan"),
+        TextColumn("[bold cyan]{task.completed}/{task.total}"),
         TimeElapsedColumn(),
         console=console,
     )
@@ -204,7 +316,7 @@ def create_progress():
 
 def show_warning(msg: str):
     """Display a warning message."""
-    console.print(f"\n  [bold yellow][!] WARNING: {msg}[/]")
+    console.print(f"\n  [yellow][!] WARNING: {msg}[/]")
 
 
 def show_error(msg: str):
@@ -214,4 +326,5 @@ def show_error(msg: str):
 
 def show_info(msg: str):
     """Display a status info message."""
-    console.print(f"\n  [bright_cyan][*] INFO: {msg}[/]")
+    console.print(f"\n  [cyan][*] INFO: {msg}[/]")
+
