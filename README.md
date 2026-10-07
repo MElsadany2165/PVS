@@ -106,13 +106,16 @@ sudo pacman -S python python-pip git
 git clone https://github.com/MElsadany2165/PVS.git
 cd PVS
 
-# Option A: Install globally via pip
-pip install .
-
-# Option B: Isolated virtual environment (Recommended for PEP 668 environments)
+# Option A: Isolated virtual environment (Recommended for PEP 668 / Debian 12+ / Ubuntu 23.04+)
 python3 -m venv venv
 source venv/bin/activate
 pip install .
+
+# Option B: Global installation using pipx (PEP 668 friendly)
+pipx install .
+
+# Option C: Global pip install (Debian/Ubuntu override if needed)
+pip install . --break-system-packages
 ```
 
 #### Step 3: Run

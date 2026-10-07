@@ -14,7 +14,21 @@ if [ -f "$SCRIPT_DIR/venv/bin/python" ]; then
 elif [ -f "$SCRIPT_DIR/.venv/bin/python" ]; then
     PYTHON="$SCRIPT_DIR/.venv/bin/python"
 elif command -v python3 >/dev/null 2>&1; then
-    PYTHON="python3"
+    BASE_PYTHON="python3"
+    # Auto-bootstrap virtual environment to seamlessly handle PEP 668
+    if ! "$BASE_PYTHON" -c "import rich, pvs" 2>/dev/null; then
+        echo "[*] Setting up isolated environment (.venv) for PEP 668 compliance..."
+        "$BASE_PYTHON" -m venv "$SCRIPT_DIR/.venv" 2>/dev/null || true
+        if [ -f "$SCRIPT_DIR/.venv/bin/python" ]; then
+            "$SCRIPT_DIR/.venv/bin/python" -m pip install -q -e "$SCRIPT_DIR" 2>/dev/null || \
+            "$SCRIPT_DIR/.venv/bin/python" -m pip install -q -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || true
+            PYTHON="$SCRIPT_DIR/.venv/bin/python"
+        else
+            PYTHON="$BASE_PYTHON"
+        fi
+    else
+        PYTHON="$BASE_PYTHON"
+    fi
 elif command -v python >/dev/null 2>&1; then
     PYTHON="python"
 else
