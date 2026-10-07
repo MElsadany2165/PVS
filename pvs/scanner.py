@@ -597,3 +597,238 @@ async def scan_host(ip, ports, timeout=2.0, concurrency=100, grab_banners=True, 
 
     result.scan_time = time.time() - start
     return result
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Intelligent Port Prioritization
+# ────────────────────────────────────────────────────────────────────────────
+
+# Ports that are most frequently open and security-relevant, ordered by
+# empirical discovery frequency from real-world network scans.
+_HIGH_PRIORITY_PORTS = [
+    80, 443, 22, 445, 139, 3389, 21, 25, 53, 8080,
+    23, 110, 143, 993, 995, 3306, 5432, 6379, 8443,
+    27017, 9200, 2375, 5900, 11211, 8888, 9090,
+]
+
+# Related port clusters — discovering one port suggests others may be open.
+_SERVICE_PORT_ASSOCIATIONS = {
+    # If SSH is open, check other admin/management ports
+    22:   [80, 443, 8080, 3306, 5432, 9090],
+    # If HTTP is open, check HTTPS + common web app ports
+    80:   [443, 8080, 8443, 8000, 3000, 5000, 9090],
+    443:  [80, 8080, 8443],
+    # If SMB is open, check Windows ecosystem
+    445:  [139, 135, 3389, 5985, 5986, 88],
+    139:  [445, 135, 3389],
+    # If MySQL is open, check other DB/cache ports
+    3306: [5432, 6379, 27017, 9200, 11211, 3000],
+    5432: [3306, 6379, 9200, 27017],
+    # If Redis, check other cache/DB ports
+    6379: [11211, 3306, 5432, 27017, 9200],
+    # If RDP, check other Windows services
+    3389: [445, 139, 135, 5985],
+    # If FTP, check related file transfer
+    21:   [22, 69, 2049, 445],
+    # If Docker API exposed, check K8s and management
+    2375: [2376, 6443, 10250, 9090, 8080],
+}
+
+
+def prioritize_ports(requested_ports: list[int], discovered_open: list[int] = None) -> list[int]:
+    """
+    Reorder a port list for intelligent scanning priority.
+
+    Moves high-priority / frequently-open ports to the front of the scan queue
+    so results appear faster and timeout budget is spent on likely-open ports first.
+
+    If `discovered_open` is provided (from a previous scan phase), ports
+    associated with those discovered services are promoted.
+
+    Args:
+        requested_ports: The full list of ports the user requested.
+        discovered_open: Optional list of already-discovered open ports.
+
+    Returns:
+        A reordered copy of requested_ports.
+    """
+    port_set = set(requested_ports)
+    priority_score = {}
+
+    # Base priority from empirical frequency
+    for idx, p in enumerate(_HIGH_PRIORITY_PORTS):
+        if p in port_set:
+            priority_score[p] = priority_score.get(p, 0) + (100 - idx)
+
+    # Boost ports associated with already-discovered services
+    if discovered_open:
+        for open_port in discovered_open:
+            related = _SERVICE_PORT_ASSOCIATIONS.get(open_port, [])
+            for rp in related:
+                if rp in port_set:
+                    priority_score[rp] = priority_score.get(rp, 0) + 50
+
+    # Build ordered list: prioritised ports first, then remainder in original order
+    prioritised = sorted(
+        [p for p in requested_ports if p in priority_score],
+        key=lambda p: priority_score.get(p, 0),
+        reverse=True
+    )
+    remainder = [p for p in requested_ports if p not in priority_score]
+    return prioritised + remainder
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Service Correlation Engine
+# ────────────────────────────────────────────────────────────────────────────
+
+# Service categories for correlation analysis
+_SERVICE_CATEGORIES = {
+    "web":       {80, 443, 8080, 8443, 8000, 8888, 9090, 3000, 5000},
+    "database":  {3306, 5432, 1433, 1521, 27017, 6379, 9200, 11211, 2049},
+    "remote":    {22, 23, 3389, 5900, 5985, 5986},
+    "email":     {25, 110, 143, 465, 587, 993, 995},
+    "file":      {20, 21, 69, 445, 139, 2049},
+    "dns":       {53},
+    "container": {2375, 2376, 6443, 10250},
+    "monitor":   {161, 162, 9090, 9100, 3000},
+}
+
+
+def correlate_services(host_results: list) -> dict:
+    """
+    Analyze discovered services across hosts and identify service correlation
+    patterns, role classifications, and dependency relationships.
+
+    Returns a dict with:
+      - host_roles: mapping of IP -> list of inferred roles
+      - service_categories: mapping of category -> list of (ip, port, service)
+      - network_services: summary of unique services found
+      - topology_hints: list of topology observation strings
+    """
+    host_roles = {}
+    service_categories = {cat: [] for cat in _SERVICE_CATEGORIES}
+    all_services = set()
+    topology_hints = []
+
+    for hr in host_results:
+        roles = set()
+        open_ports = {pr.port for pr in hr.ports}
+
+        for pr in hr.ports:
+            svc = (pr.service or "").lower()
+            all_services.add(svc if svc and svc != "unknown" else f"port-{pr.port}")
+
+            # Classify into categories
+            for cat, cat_ports in _SERVICE_CATEGORIES.items():
+                if pr.port in cat_ports:
+                    service_categories[cat].append((hr.ip, pr.port, svc))
+
+        # Infer host roles from open ports
+        web_ports = open_ports & _SERVICE_CATEGORIES["web"]
+        db_ports = open_ports & _SERVICE_CATEGORIES["database"]
+        remote_ports = open_ports & _SERVICE_CATEGORIES["remote"]
+        container_ports = open_ports & _SERVICE_CATEGORIES["container"]
+
+        if web_ports and db_ports:
+            roles.add("application-server")
+            topology_hints.append(
+                f"{hr.ip} hosts both web ({sorted(web_ports)}) and database "
+                f"({sorted(db_ports)}) services — likely an application server "
+                f"or development environment."
+            )
+        elif web_ports:
+            roles.add("web-server")
+        if db_ports and not web_ports:
+            roles.add("database-server")
+        if remote_ports:
+            roles.add("remote-admin")
+        if container_ports:
+            roles.add("container-host")
+        if 53 in open_ports:
+            roles.add("dns-server")
+        if open_ports & {25, 465, 587}:
+            roles.add("mail-server")
+        if open_ports & {445, 139}:
+            roles.add("file-server")
+
+        # Gateway / router detection
+        if len(open_ports) >= 5 and {80, 443, 53} <= open_ports:
+            roles.add("gateway/router")
+            topology_hints.append(
+                f"{hr.ip} exposes HTTP, HTTPS, and DNS — likely a network "
+                f"gateway or router."
+            )
+
+        host_roles[hr.ip] = sorted(roles) if roles else ["general-purpose"]
+
+    # Cross-host correlation insights
+    db_hosts = [ip for ip, roles in host_roles.items() if "database-server" in roles]
+    web_hosts = [ip for ip, roles in host_roles.items() if "web-server" in roles or "application-server" in roles]
+    if db_hosts and web_hosts:
+        topology_hints.append(
+            f"Network has {len(web_hosts)} web/app server(s) and "
+            f"{len(db_hosts)} database server(s) — typical multi-tier architecture."
+        )
+
+    return {
+        "host_roles": host_roles,
+        "service_categories": {
+            cat: entries for cat, entries in service_categories.items() if entries
+        },
+        "network_services": sorted(all_services),
+        "topology_hints": topology_hints,
+    }
+
+
+def build_network_topology(host_results: list) -> dict:
+    """
+    Build a lightweight network topology map from scan results.
+
+    Returns a dict with:
+      - total_hosts: int
+      - live_hosts: int
+      - host_map: list of dicts with ip, hostname, os, role, open_ports, services
+      - subnet_summary: dict mapping subnet prefix -> host count
+    """
+    host_map = []
+    subnet_counts = {}
+    correlation = correlate_services(host_results)
+
+    for hr in host_results:
+        services = []
+        for pr in hr.ports:
+            svc_name = pr.service or WELL_KNOWN_SERVICES.get(pr.port, f"port-{pr.port}")
+            services.append({
+                "port": pr.port,
+                "service": svc_name,
+                "version": pr.version or "",
+                "has_tls": bool(getattr(pr, "tls_info", None)),
+            })
+
+        roles = correlation["host_roles"].get(hr.ip, ["general-purpose"])
+
+        host_map.append({
+            "ip": hr.ip,
+            "hostname": hr.hostname or "",
+            "os_guess": getattr(hr, "os_guess", ""),
+            "latency_ms": getattr(hr, "latency_ms", 0.0),
+            "roles": roles,
+            "open_ports": len(hr.ports),
+            "services": services,
+        })
+
+        # Subnet grouping
+        parts = hr.ip.split(".")
+        if len(parts) == 4:
+            subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+            subnet_counts[subnet] = subnet_counts.get(subnet, 0) + 1
+
+    return {
+        "total_hosts": len(host_results),
+        "live_hosts": sum(1 for hr in host_results if hr.is_up),
+        "host_map": host_map,
+        "subnet_summary": subnet_counts,
+        "correlation": correlation,
+    }
+

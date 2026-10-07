@@ -5,6 +5,7 @@
 NVD (National Vulnerability Database) API Client.
 Queries CVEs associated with detected services/products.
 """
+import re
 import time
 import json
 import urllib.request

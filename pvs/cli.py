@@ -15,7 +15,7 @@ import time
 import webbrowser
 
 from pvs import __version__
-from pvs.scanner import resolve_targets, parse_ports, scan_host, filter_live_hosts, get_local_subnet, get_local_ip
+from pvs.scanner import resolve_targets, parse_ports, scan_host, filter_live_hosts, get_local_subnet, get_local_ip, prioritize_ports
 from pvs.vuln_engine import VulnerabilityEngine, LocalVulnCache
 from pvs.nvd_client import check_internet_connectivity
 from pvs.reporter import (
@@ -26,8 +26,9 @@ from pvs.display import (
     console, show_banner, show_disclaimer, show_scan_config,
     show_host_results, show_cve_results, show_summary,
     create_progress, show_warning, show_error, show_info,
-    show_post_scan_actions,
+    show_post_scan_actions, show_brain_insights,
 )
+from pvs.brain import analyze_scan_results
 from pvs.services import WELL_KNOWN_SERVICES
 from pvs.logger import setup_logging
 
@@ -136,6 +137,9 @@ async def run_scan(args):
     if not ports:
         show_error(f"No valid ports in specification: {args.ports}")
         return 1
+
+    # Intelligent port prioritization — reorder for faster discovery
+    ports = prioritize_ports(ports)
 
     # Host Discovery (Ping sweep) for multiple targets
     if len(targets) > 1 and not args.no_ping:
@@ -261,9 +265,15 @@ async def run_scan(args):
     total_time = time.time() - start_time
     show_summary(host_results, total_time)
 
-    # Generate reports
+    # ── Brain Intelligence Analysis ──────────────────────────────────────
     scan_mode = engine.scan_mode if engine is not None else "online"
-    scan_data = build_scan_data(target_str, host_results, cve_results, scan_mode=scan_mode)
+    brain_posture = analyze_scan_results(
+        host_results, cve_results, scan_mode=scan_mode
+    )
+    show_brain_insights(brain_posture)
+
+    # Generate reports
+    scan_data = build_scan_data(target_str, host_results, cve_results, scan_mode=scan_mode, brain_posture=brain_posture)
 
     if args.output:
         base = args.output.rsplit(".", 1)[0] if "." in args.output else args.output

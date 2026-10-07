@@ -99,16 +99,35 @@ def generate_html_report(scan_data: dict, filepath: str):
     scan_mode = scan_data.get("scan_mode", "online")
     if scan_mode == "offline":
         offline_notice_html = """
-<div style="background:#78350f22;border:2px solid #d97706;border-radius:10px;padding:1rem 1.2rem;margin:1rem 0;display:flex;align-items:flex-start;gap:0.8rem;">
-  <span style="font-size:1.5rem;flex-shrink:0;">⚠️</span>
-  <div>
-    <strong style="color:#d97706;font-size:1rem;">OFFLINE MODE — Live CVE Lookups Were Disabled</strong><br>
-    <span style="color:var(--text);font-size:0.9rem;">
-      No internet connection was detected when this scan ran. Live NVD and OSV vulnerability database queries were
-      <strong>skipped</strong>. CVE results shown below come exclusively from the built-in curated offline database and
-      active network audits. To get the full live intelligence picture, reconnect to the internet and rescan.
-    </span>
+<div style="background:#78350f18;border:2px solid #d97706;border-radius:10px;padding:1.2rem 1.4rem;margin:1rem 0;">
+  <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.8rem;">
+    <span style="font-size:1.5rem;">📡</span>
+    <strong style="color:#d97706;font-size:1.1rem;">Offline Intelligence Mode</strong>
   </div>
+  <p style="color:var(--text);font-size:0.9rem;margin:0 0 0.8rem 0;">
+    This scan ran without internet connectivity. PVS operated in <strong>Offline Intelligence Mode</strong>,
+    using its full suite of local security engines:
+  </p>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.6rem;margin-bottom:0.8rem;">
+    <div style="background:var(--surface-card);border:1px solid var(--border);border-radius:8px;padding:0.8rem;text-align:center;">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--success);">✓</div>
+      <div style="font-size:0.8rem;font-weight:600;color:var(--text);margin-top:0.2rem;">Curated CVE Database</div>
+      <div style="font-size:0.7rem;color:var(--muted);">15+ high-impact CVEs across OpenSSH, Apache, Nginx, Redis, ProFTPD, OpenSSL & more</div>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border);border-radius:8px;padding:0.8rem;text-align:center;">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--success);">✓</div>
+      <div style="font-size:0.8rem;font-weight:600;color:var(--text);margin-top:0.2rem;">12 Active Network Audits</div>
+      <div style="font-size:0.7rem;color:var(--muted);">Unauthenticated DBs, SMBv1, RDP, Docker, FTP, cleartext protocols, file leaks, weak TLS</div>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border);border-radius:8px;padding:0.8rem;text-align:center;">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--success);">✓</div>
+      <div style="font-size:0.8rem;font-weight:600;color:var(--text);margin-top:0.2rem;">Brain Analysis Engine</div>
+      <div style="font-size:0.7rem;color:var(--muted);">Risk scoring, attack surface mapping, pattern recognition &mdash; 100% local</div>
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:0.8rem;margin:0;font-style:italic;">
+    💡 For additional CVE coverage from live NVD and OSV databases, connect to the internet and rescan.
+  </p>
 </div>"""
     else:
         offline_notice_html = ""
@@ -435,6 +454,91 @@ window.addEventListener('DOMContentLoaded', () => {{
 </div>
 """
 
+    # ── Brain Posture Section ────────────────────────────────────────────────
+    brain_data = scan_data.get("brain_posture")
+    if brain_data:
+        b_risk = brain_data.get("risk_score", 0)
+        b_level = h(brain_data.get("risk_level", "UNKNOWN"))
+        b_color = brain_data.get("risk_color", "#8b949e") if isinstance(brain_data.get("risk_color"), str) else "#8b949e"
+        b_summary = h(brain_data.get("executive_summary", ""))
+        b_insights = brain_data.get("insights", [])
+        b_surface = brain_data.get("attack_surface", [])
+
+        # Risk gauge percentage for the bar
+        gauge_pct = min(100, max(0, int(b_risk)))
+
+        html_content += f"""
+<div class="section">
+    <h2>🧠 PVS Brain — Network Security Posture</h2>
+
+    <div style="display:flex;align-items:center;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+        <div style="text-align:center;">
+            <div style="font-size:2.8rem;font-weight:800;color:{b_color};line-height:1;">{b_risk}</div>
+            <div style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;font-weight:600;">Risk Score</div>
+        </div>
+        <div style="flex:1;min-width:200px;">
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;height:18px;overflow:hidden;">
+                <div style="width:{gauge_pct}%;height:100%;background:linear-gradient(90deg,{b_color}88,{b_color});border-radius:8px;transition:width 0.5s;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:0.3rem;">
+                <span style="font-size:0.7rem;color:var(--muted);">0 (Minimal)</span>
+                <span style="font-size:0.85rem;font-weight:700;color:{b_color};">{b_level}</span>
+                <span style="font-size:0.7rem;color:var(--muted);">100 (Critical)</span>
+            </div>
+        </div>
+    </div>
+
+    <p style="color:var(--text);font-size:0.9rem;line-height:1.6;margin-bottom:1.2rem;">{b_summary}</p>
+"""
+
+        # Insights cards
+        if b_insights:
+            html_content += '<h3 style="margin-bottom:0.6rem;font-size:1.05rem;">📋 Intelligence Insights</h3>'
+            insight_colors = {
+                "critical_action": ("#f85149", "#f8514922"),
+                "warning": ("#d29922", "#d2992222"),
+                "recommendation": ("#58a6ff", "#58a6ff18"),
+                "info": ("#8b949e", "#8b949e15"),
+            }
+            for ins in b_insights:
+                i_cat = ins.get("category", "info")
+                i_color, i_bg = insight_colors.get(i_cat, ("#8b949e", "#8b949e15"))
+                i_icon = h(ins.get("icon", "•"))
+                i_title = h(ins.get("title", ""))
+                i_desc = h(ins.get("description", ""))
+                i_hosts = ins.get("affected_hosts", [])
+                hosts_tag = f'<span style="font-size:0.7rem;color:var(--muted);margin-left:0.5rem;">{len(i_hosts)} host(s)</span>' if i_hosts else ''
+
+                html_content += f"""
+    <div style="background:{i_bg};border-left:4px solid {i_color};border-radius:6px;padding:0.8rem 1rem;margin-bottom:0.6rem;">
+        <div style="font-weight:700;color:{i_color};font-size:0.9rem;">{i_icon} {i_title}{hosts_tag}</div>
+        <div style="color:var(--text);font-size:0.85rem;margin-top:0.3rem;line-height:1.5;">{i_desc}</div>
+    </div>
+"""
+
+        # Attack Surface Summary (top critical+high entries)
+        critical_surface = [e for e in b_surface if e.get("exposure_level") in ("critical", "high")]
+        if critical_surface:
+            html_content += '<h3 style="margin-top:1rem;margin-bottom:0.5rem;font-size:1.05rem;">🎯 High-Risk Attack Surface</h3>'
+            html_content += '<table><thead><tr><th>Host</th><th>Port</th><th>Service</th><th>Exposure</th><th>Risk Reason</th></tr></thead><tbody>'
+            for entry in critical_surface[:15]:
+                e_level = h(entry.get("exposure_level", "").upper())
+                e_color = "#f85149" if entry.get("exposure_level") == "critical" else "#da3633"
+                lateral_tag = ' <span style="font-size:0.65rem;background:#7c3aed22;color:#7c3aed;padding:0.1rem 0.3rem;border-radius:3px;">LATERAL</span>' if entry.get("lateral_movement_risk") else ''
+                html_content += f"""
+                <tr>
+                    <td>{h(entry.get('host',''))}</td>
+                    <td class="port-num">{entry.get('port','')}</td>
+                    <td>{h(entry.get('service',''))}</td>
+                    <td><span class="severity" style="background:{e_color}22;color:{e_color};">{e_level}</span>{lateral_tag}</td>
+                    <td style="font-size:0.85rem;color:var(--muted);">{h(entry.get('exposure_reason',''))}</td>
+                </tr>"""
+            html_content += '</tbody></table>'
+            if len(critical_surface) > 15:
+                html_content += f'<p style="color:var(--muted);font-size:0.8rem;margin-top:0.3rem;">... and {len(critical_surface)-15} more high-risk entries</p>'
+
+        html_content += '</div>'
+
     step_counter = 0
 
     for host_data in scan_data.get("hosts", []):
@@ -639,8 +743,8 @@ window.addEventListener('DOMContentLoaded', () => {{
     logger.info(f"HTML report saved: {filepath}")
 
 
-def build_scan_data(target, host_results, cve_results=None, scan_mode: str = "online"):
-    """Build structured scan data dict from results."""
+def build_scan_data(target, host_results, cve_results=None, scan_mode: str = "online", brain_posture=None):
+    """Build structured scan data dict from results, including Brain posture analysis."""
     hosts_data = []
     for hr in host_results:
         ports_data = []
@@ -682,9 +786,16 @@ def build_scan_data(target, host_results, cve_results=None, scan_mode: str = "on
             "latency_ms": getattr(hr, "latency_ms", 0.0),
             "ports": ports_data,
         })
-    return {
+    result = {
         "scanner": "PVS", "version": __version__,
         "scan_time": datetime.now().isoformat(),
         "target": target, "hosts": hosts_data,
         "scan_mode": scan_mode,  # 'online' | 'offline' — never hide this from the user
     }
+    # Attach Brain posture analysis if available
+    if brain_posture is not None:
+        if hasattr(brain_posture, "to_dict"):
+            result["brain_posture"] = brain_posture.to_dict()
+        elif isinstance(brain_posture, dict):
+            result["brain_posture"] = brain_posture
+    return result

@@ -357,3 +357,70 @@ def show_info(msg: str):
     """Display a status info message."""
     console.print(f"\n  [cyan][*] INFO: {msg}[/]")
 
+
+def show_brain_insights(posture):
+    """Display Brain intelligence analysis results in the CLI."""
+    if posture is None:
+        return
+
+    # Risk Score Panel
+    risk_color_map = {
+        "CRITICAL": "bold bright_red",
+        "HIGH": "bold red",
+        "MEDIUM": "bold yellow",
+        "LOW": "bold green",
+        "MINIMAL": "bold green",
+    }
+    risk_style = risk_color_map.get(posture.risk_level, "bold white")
+
+    risk_text = Text()
+    risk_text.append("  Network Risk Score: ", style="dim")
+    risk_text.append(f"{posture.risk_score}/100", style=risk_style)
+    risk_text.append(f"  [{posture.risk_level}]\n\n", style=risk_style)
+    risk_text.append(f"  {posture.executive_summary}\n", style="dim")
+
+    console.print(Panel(
+        risk_text,
+        title="[bold cyan]🧠 PVS Brain — Network Security Posture[/]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1),
+    ))
+
+    # Insights
+    if posture.insights:
+        insight_text = Text()
+        category_styles = {
+            "critical_action": ("bold bright_red", "🚨"),
+            "warning": ("bold yellow", "⚠️"),
+            "recommendation": ("bold cyan", "💡"),
+            "info": ("dim", "ℹ️"),
+        }
+
+        shown = 0
+        for insight in posture.insights:
+            if shown >= 6:
+                remaining = len(posture.insights) - shown
+                if remaining > 0:
+                    insight_text.append(f"\n  ... and {remaining} more insight(s) in the HTML report\n", style="dim")
+                break
+
+            style, icon = category_styles.get(insight.category, ("dim", "•"))
+            insight_text.append(f"\n  {insight.icon} ", style=style)
+            insight_text.append(f"{insight.title}\n", style=style)
+            # Wrap description to ~90 chars for readability
+            desc = insight.description
+            if len(desc) > 150:
+                desc = desc[:147] + "..."
+            insight_text.append(f"    {desc}\n", style="dim")
+            shown += 1
+
+        console.print(Panel(
+            insight_text,
+            title="[bold cyan]🧠 Brain Insights & Recommendations[/]",
+            border_style="cyan",
+            box=box.ROUNDED,
+            padding=(0, 1),
+        ))
+
+
