@@ -1,0 +1,17 @@
+.git
+.gitignore
+.pytest_cache
+.pytest_cache_local
+__pycache__
+*.pyc
+*.pyo
+venv
+.venv
+dist
+build
+*.egg-info
+reports/*.html
+reports/*.json
+reports/*.csv
+.DS_Store
+Thumbs.db

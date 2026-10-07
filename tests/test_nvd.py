@@ -18,6 +18,10 @@ def test_build_cpe():
     cpe = build_cpe("redis", "", "7.2.3")
     assert cpe == "cpe:2.3:a:redis:redis:7.2.3:*:*:*:*:*:*:*"
 
+    # Test Apache HTTP banner with slash-prefixed version
+    cpe = build_cpe("http", "Apache/2.4.52 (Ubuntu)", "Apache/2.4.52 (Ubuntu)")
+    assert cpe == "cpe:2.3:a:apache:http_server:2.4.52:*:*:*:*:*:*:*"
+
     # Return None if version is missing
     assert build_cpe("ssh", "", "") is None
 

@@ -3,18 +3,18 @@ name = "pvs"
 version = "2.0.0"
 description = "Personal Vulnerability Scanner - CLI tool for port scanning, service detection, and CVE lookup"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     {name = "Mohamed Essam Elsadany"},
 ]
-keywords = ["security", "vulnerability", "scanner", "port-scan", "cve", "nvd"]
+keywords = ["security", "vulnerability", "scanner", "port-scan", "cve", "nvd", "remediation", "cybersecurity", "audit"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Information Technology",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -23,6 +23,12 @@ classifiers = [
     "Topic :: Security",
     "Topic :: System :: Networking",
 ]
+
+[project.urls]
+Homepage = "https://github.com/MElsadany2165/PVS"
+Documentation = "https://github.com/MElsadany2165/PVS#readme"
+Repository = "https://github.com/MElsadany2165/PVS"
+"Issue Tracker" = "https://github.com/MElsadany2165/PVS/issues"
 
 dependencies = [
     "rich>=13.0.0",

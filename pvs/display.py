@@ -96,15 +96,19 @@ def show_scan_config(target, ports_count, options):
 
 
 def show_host_results(host_result):
-    """Display scan results for a single target host."""
+    """Display scan results for a single target host with OS fingerprinting and latency."""
     if not host_result.ports:
         console.print(f"\n  [dim]Host {host_result.ip} - no open ports detected in scope[/]")
         return
 
-    # Host header
+    # Host header with OS guess & latency
     host_label = host_result.ip
     if host_result.hostname:
         host_label += f" ({host_result.hostname})"
+    if getattr(host_result, "os_guess", ""):
+        host_label += f" — [green]{host_result.os_guess}[/]"
+    if getattr(host_result, "latency_ms", 0.0) > 0:
+        host_label += f" [dim]({host_result.latency_ms}ms round-trip)[/]"
 
     table = Table(
         title=f"Host Audit Details: {host_label}",
@@ -118,14 +122,21 @@ def show_host_results(host_result):
     table.add_column("State", width=8)
     table.add_column("Service", style="bold white", width=16)
     table.add_column("Version", width=30)
-    table.add_column("Captured Banner", style="dim", max_width=40, overflow="ellipsis")
+    table.add_column("Captured Banner / Recon", style="dim", max_width=45, overflow="ellipsis")
 
     for port in host_result.ports:
         state_text = Text("open", style="green")
+        banner_display = port.banner[:60] if port.banner else ""
+        if getattr(port, "tls_info", None):
+            tls_v = port.tls_info.get("version", "TLS")
+            tls_c = port.tls_info.get("cipher", "")
+            prefix = f"[{tls_v}] {tls_c} " if tls_c else f"[{tls_v}] "
+            banner_display = (prefix + banner_display)[:60]
+
         table.add_row(
             str(port.port), state_text,
             port.service, port.version,
-            port.banner[:60] if port.banner else "",
+            banner_display,
         )
 
     console.print()
@@ -134,7 +145,7 @@ def show_host_results(host_result):
 
 
 def show_cve_results(cve_results: dict, show_remediation: bool = False):
-    """Display multi-source CVE lookup results and optional single service remediation procedure."""
+    """Display multi-source CVE lookup results, EPSS threat scores, and remediation procedures."""
     if not cve_results:
         console.print("\n  [dim]No security vulnerabilities identified in service signatures.[/]")
         return
@@ -171,8 +182,8 @@ def show_cve_results(cve_results: dict, show_remediation: bool = False):
         table.add_column("CVE ID", style="bold white", width=18)
         table.add_column("Severity", width=12, justify="center")
         table.add_column("CVSS Score", width=12, justify="center")
-        table.add_column("Threat Status", width=18, justify="center")
-        table.add_column("Description", max_width=50)
+        table.add_column("Threat Status / Priority", width=26, justify="center")
+        table.add_column("Description", max_width=45)
 
         for cve in cves[:10]:
             cve_id = cve.cve_id if hasattr(cve, "cve_id") else cve.get("cve_id", "UNKNOWN")
@@ -180,11 +191,23 @@ def show_cve_results(cve_results: dict, show_remediation: bool = False):
             score = cve.score if hasattr(cve, "score") else cve.get("score", 0.0)
             description = cve.description if hasattr(cve, "description") else cve.get("description", "")
             is_kev = cve.is_kev if hasattr(cve, "is_kev") else cve.get("is_kev", False)
+            p_score = getattr(cve, "priority_score", 0.0) if hasattr(cve, "priority_score") else cve.get("priority_score", 0.0)
+            p_level = getattr(cve, "priority_level", "") if hasattr(cve, "priority_level") else cve.get("priority_level", "")
+            epss_val = getattr(cve, "epss_score", 0.0) if hasattr(cve, "epss_score") else cve.get("epss_score", 0.0)
 
             sev_style = SEVERITY_STYLES.get(severity, "dim")
             score_style = "bold red" if score >= 7.0 else "bold yellow" if score >= 4.0 else "green"
 
-            status_text = Text("KEV EXPLOITED", style="bold red") if is_kev else Text("Standard CVE", style="dim")
+            if str(cve_id).startswith("VULN-"):
+                status_text = Text(f"🔥 ACTIVE EXPOSURE ({p_score:.0f}/100)", style="bold bright_red")
+            elif is_kev:
+                status_text = Text(f"🚨 KEV EXPLOITED ({p_score:.0f}/100)", style="bold red")
+            elif p_score > 0:
+                p_style = "bold red" if p_score >= 85 else "bold yellow" if p_score >= 70 else "white"
+                epss_str = f" | EPSS:{epss_val*100:.0f}%" if epss_val > 0 else ""
+                status_text = Text(f"{p_level} {p_score:.0f}/100{epss_str}", style=p_style)
+            else:
+                status_text = Text("Standard CVE", style="dim")
 
             table.add_row(
                 Text(cve_id, style="white"),
@@ -207,19 +230,25 @@ def show_cve_results(cve_results: dict, show_remediation: bool = False):
                 rem_text = Text()
                 rem_text.append(f"{summary_desc}\n\n", style="dim")
 
-                for step in steps_list[:3]:
+                for step in steps_list:
                     s_num = step.step_number if hasattr(step, "step_number") else step.get("step_number", 1)
                     s_title = step.title if hasattr(step, "title") else step.get("title", "")
                     s_desc = step.description if hasattr(step, "description") else step.get("description", "")
                     s_lin = (step.command_linux if hasattr(step, "command_linux") else step.get("command_linux")) or ""
                     s_win = (step.command_windows if hasattr(step, "command_windows") else step.get("command_windows")) or ""
+                    s_mac = (step.command_macos if hasattr(step, "command_macos") else step.get("command_macos")) or ""
+                    s_disr = (step.disruption_level if hasattr(step, "disruption_level") else step.get("disruption_level")) or ""
+                    s_est = (step.estimated_time if hasattr(step, "estimated_time") else step.get("estimated_time")) or ""
 
-                    rem_text.append(f"Step {s_num}: {s_title}\n", style="bold white")
+                    meta = f" [{s_disr} | {s_est}]" if (s_disr or s_est) else ""
+                    rem_text.append(f"Step {s_num}: {s_title}{meta}\n", style="bold white")
                     rem_text.append(f"  {s_desc}\n", style="dim")
                     if s_lin:
                         rem_text.append(f"  Linux   : {s_lin}\n", style="white")
                     if s_win:
                         rem_text.append(f"  Windows : {s_win}\n", style="white")
+                    if s_mac:
+                        rem_text.append(f"  macOS   : {s_mac}\n", style="white")
                     rem_text.append("\n")
 
                 console.print(Panel(

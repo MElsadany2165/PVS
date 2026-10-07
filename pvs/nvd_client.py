@@ -20,6 +20,56 @@ logger = get_logger(__name__)
 
 NVD_API_BASE = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
+# Connectivity check endpoints (in priority order)
+_CONNECTIVITY_TEST_HOSTS = [
+    ("nvd.nist.gov", 443),
+    ("api.osv.dev", 443),
+    ("8.8.8.8", 53),
+]
+
+# Module-level cached connectivity result (None = not yet checked)
+_internet_available: "Optional[bool]" = None
+
+
+def check_internet_connectivity(timeout: float = 3.0, force: bool = False) -> bool:
+    """
+    Check whether internet connectivity is available by probing well-known hosts.
+
+    This is the authoritative pre-flight check that the entire vulnerability engine
+    relies on.  The result is cached for the lifetime of the process so subsequent
+    calls are instant (< 1 ms).
+
+    Args:
+        timeout: TCP connection timeout per probe attempt (default: 3 s).
+        force:   Re-run the check even if a cached result exists.
+
+    Returns:
+        True  – at least one probe host is reachable (internet available).
+        False – all probes failed (offline / blocked).
+    """
+    global _internet_available
+    import socket as _socket
+
+    if _internet_available is not None and not force:
+        return _internet_available
+
+    for host, port in _CONNECTIVITY_TEST_HOSTS:
+        try:
+            sock = _socket.create_connection((host, port), timeout=timeout)
+            sock.close()
+            _internet_available = True
+            logger.debug(f"Internet connectivity confirmed via {host}:{port}")
+            return True
+        except OSError:
+            continue
+
+    _internet_available = False
+    logger.warning(
+        "Internet connectivity check FAILED: all probe hosts unreachable. "
+        "Live NVD/OSV CVE lookups will be DISABLED this session."
+    )
+    return False
+
 
 @dataclass
 class CVEEntry:
@@ -47,26 +97,83 @@ class CVEEntry:
 
 # Service to CPE vendor/product mappings for high-fidelity CVE lookup.
 CPE_MAP = {
+    # Remote Access & Shell
     "ssh": ("openbsd", "openssh"),
+    "openssh": ("openbsd", "openssh"),
+    "dropbear": ("dropbear_project", "dropbear"),
+    "telnet": ("gnu", "inetutils"),
+    # Web Servers
     "http": ("apache", "http_server"),
     "https": ("apache", "http_server"),
-    "ftp": ("vsftpd_project", "vsftpd"),
-    "mysql": ("mysql", "mysql"),
-    "postgresql": ("postgresql", "postgresql"),
-    "redis": ("redis", "redis"),
-    "nginx": ("nginx", "nginx"),
     "apache": ("apache", "http_server"),
-    "tomcat": ("apache", "tomcat"),
-    "iis": ("microsoft", "iis"),
-    "dropbear": ("dropbear_project", "dropbear"),
+    "httpd": ("apache", "http_server"),
+    "nginx": ("nginx", "nginx"),
     "lighttpd": ("lighttpd", "lighttpd"),
-    "mongodb": ("mongodb", "mongodb"),
-    "memcached": ("memcached", "memcached"),
-    "elasticsearch": ("elastic", "elasticsearch"),
-    "influxdb": ("influxdata", "influxdb"),
+    "tomcat": ("apache", "tomcat"),
+    "iis": ("microsoft", "internet_information_services"),
+    "caddy": ("caddyserver", "caddy"),
+    "haproxy": ("haproxy", "haproxy"),
+    "traefik": ("traefik", "traefik"),
+    # Databases
+    "mysql": ("oracle", "mysql"),
     "mariadb": ("mariadb", "mariadb"),
+    "postgresql": ("postgresql", "postgresql"),
+    "postgres": ("postgresql", "postgresql"),
+    "mongodb": ("mongodb", "mongodb"),
+    "mssql": ("microsoft", "sql_server"),
+    "oracle": ("oracle", "database_server"),
     "sqlite": ("sqlite", "sqlite"),
+    "couchdb": ("apache", "couchdb"),
+    # Caching & Messaging
+    "redis": ("redis", "redis"),
+    "memcached": ("memcached", "memcached"),
+    "rabbitmq": ("pivotal_software", "rabbitmq"),
+    "kafka": ("apache", "kafka"),
+    # Search & Analytics
+    "elasticsearch": ("elastic", "elasticsearch"),
+    "kibana": ("elastic", "kibana"),
+    "influxdb": ("influxdata", "influxdb"),
+    "grafana": ("grafana", "grafana"),
+    # File Sharing & SMB
     "samba": ("samba", "samba"),
+    "smb": ("microsoft", "windows"),
+    "microsoft-ds": ("microsoft", "windows"),
+    "nfs": ("linux", "linux_kernel"),
+    # FTP
+    "ftp": ("vsftpd_project", "vsftpd"),
+    "vsftpd": ("vsftpd_project", "vsftpd"),
+    "proftpd": ("proftpd", "proftpd"),
+    "pure-ftpd": ("pureftpd", "pure-ftpd"),
+    # Mail
+    "smtp": ("postfix", "postfix"),
+    "postfix": ("postfix", "postfix"),
+    "sendmail": ("sendmail", "sendmail"),
+    "exim": ("exim", "exim"),
+    "dovecot": ("dovecot", "dovecot"),
+    # DNS
+    "dns": ("isc", "bind"),
+    "domain": ("isc", "bind"),
+    "named": ("isc", "bind"),
+    "dnsmasq": ("thekelleys", "dnsmasq"),
+    "unbound": ("nlnetlabs", "unbound"),
+    # VPN & Remote Desktop
+    "openvpn": ("openvpn", "openvpn"),
+    "rdp": ("microsoft", "remote_desktop_connection"),
+    "vnc": ("realvnc", "vnc_server"),
+    # Containers & Orchestration
+    "docker": ("docker", "docker"),
+    "containerd": ("linuxfoundation", "containerd"),
+    "kubernetes": ("kubernetes", "kubernetes"),
+    # Monitoring & SNMP
+    "snmp": ("net-snmp", "net-snmp"),
+    "nagios": ("nagios", "nagios"),
+    "zabbix": ("zabbix", "zabbix"),
+    # Other
+    "jenkins": ("jenkins", "jenkins"),
+    "gitlab": ("gitlab", "gitlab"),
+    "jira": ("atlassian", "jira"),
+    "confluence": ("atlassian", "confluence"),
+    "wordpress": ("wordpress", "wordpress"),
 }
 
 
@@ -97,7 +204,7 @@ def build_cpe(service: str, banner: str, version: str) -> Optional[str]:
     elif "proftpd" in banner_lower:
         vendor, product = "proftpd", "proftpd"
     elif "mysql" in banner_lower or "mysql" in service_lower:
-        vendor, product = "mysql", "mysql"
+        vendor, product = "oracle", "mysql"
     elif "postgresql" in banner_lower or "postgresql" in service_lower:
         vendor, product = "postgresql", "postgresql"
     elif "redis" in banner_lower or "redis" in service_lower:
@@ -115,7 +222,12 @@ def build_cpe(service: str, banner: str, version: str) -> Optional[str]:
         return None
         
     # Clean version string (e.g. extract alphanumeric + dots, remove build/os tags)
-    clean_version = version.split()[0].split("(")[0].strip()
+    clean_version = version.strip()
+    if "openssh_" in clean_version.lower():
+        clean_version = re.sub(r'(?i)openssh_', '', clean_version)
+    clean_version = clean_version.split()[0].split("(")[0].strip()
+    if "/" in clean_version:
+        clean_version = clean_version.split("/", 1)[1].strip()
     return f"cpe:2.3:a:{vendor}:{product}:{clean_version}:*:*:*:*:*:*:*"
 
 

@@ -17,6 +17,7 @@ import webbrowser
 from pvs import __version__
 from pvs.scanner import resolve_targets, parse_ports, scan_host, filter_live_hosts, get_local_subnet, get_local_ip
 from pvs.vuln_engine import VulnerabilityEngine, LocalVulnCache
+from pvs.nvd_client import check_internet_connectivity
 from pvs.reporter import (
     build_scan_data, generate_json_report,
     generate_csv_report, generate_html_report,
@@ -27,6 +28,7 @@ from pvs.display import (
     create_progress, show_warning, show_error, show_info,
     show_post_scan_actions,
 )
+from pvs.services import WELL_KNOWN_SERVICES
 from pvs.logger import setup_logging
 
 
@@ -60,8 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("-c", "--concurrency", type=int, default=100, help="Max concurrent connections")
     scan_parser.add_argument("--no-ping", action="store_true", help="Skip host discovery ping sweep")
     scan_parser.add_argument("--no-banner-grab", action="store_true", help="Disable service banner grabbing")
-    scan_parser.add_argument("--cve", action="store_true", help="Look up CVEs & threats via multi-source engine (NVD + CISA KEV + OSV)")
-    scan_parser.add_argument("--fix", "--remediation", dest="fix", action="store_true", help="Display step-by-step fix procedures in CLI output")
+    scan_parser.add_argument("--no-audit", action="store_true", help="Disable active network vulnerability probes")
+    scan_parser.add_argument("--cve", action="store_true", default=True, help="Look up CVEs & threats via multi-source engine (NVD + CISA KEV + OSV) [default: enabled]")
+    scan_parser.add_argument("--no-cve", dest="cve", action="store_false", help="Disable CVE and threat lookups (port scan only)")
+    scan_parser.add_argument("--fix", "--remediation", dest="fix", action="store_true", default=True, help="Display step-by-step fix procedures in CLI output [default: enabled]")
+    scan_parser.add_argument("--no-fix", dest="fix", action="store_false", help="Hide remediation procedures in CLI output")
     scan_parser.add_argument("--open", action="store_true", help="Automatically open generated HTML report in web browser when complete")
     scan_parser.add_argument("--nvd-api-key", help="NVD API key for higher rate limits")
     scan_parser.add_argument("--max-cves", type=int, default=5, help="Max CVEs to retrieve per service")
@@ -84,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def run_scan(args):
     """Execute the scan command."""
+    engine = None
+    scan_mode = "online"  # Default; updated after connectivity check
+
     # Handle cache clearing if requested
     if getattr(args, "clear_cache", False):
         cache = LocalVulnCache()
@@ -191,25 +199,52 @@ async def run_scan(args):
     for hr in host_results:
         show_host_results(hr)
 
-    # Multi-Source CVE lookup with SQLite Caching & CISA KEV
+    # Multi-Source CVE lookup with SQLite Caching, Active Audits & CISA KEV
     cve_results = {}
     if args.cve:
         open_services = []
         for hr in host_results:
             for pr in hr.ports:
-                if pr.service and pr.service != "unknown":
-                    open_services.append((hr.ip, pr))
+                svc = pr.service if (pr.service and pr.service != "unknown") else WELL_KNOWN_SERVICES.get(pr.port, "unknown")
+                if svc == "unknown" and pr.port:
+                    svc = f"port-{pr.port}"
+                open_services.append((hr.ip, pr, svc))
 
         if open_services:
             engine = VulnerabilityEngine(
                 nvd_api_key=args.nvd_api_key or os.environ.get("NVD_API_KEY"),
                 use_cache=not getattr(args, "no_cache", False)
             )
-            show_info(f"Looking up CVEs & threats for {len(open_services)} service(s)...")
+            audit_enabled = not getattr(args, "no_audit", False)
 
-            async def _lookup(ip, pr, task_id):
+            # ── Connectivity Pre-Flight Display ──────────────────────────────────
+            # Surface the honest connectivity status so the user always knows
+            # whether live NVD/OSV lookups are running or were silently skipped.
+            if engine._online:
+                show_info(
+                    "[bold green]✓ Internet connectivity: ONLINE[/bold green] "
+                    "— Live NVD + OSV lookups enabled"
+                )
+            else:
+                show_warning(
+                    "[bold yellow]! Internet connectivity: OFFLINE[/bold yellow] "
+                    "— Live CVE lookups DISABLED. Using curated offline vulnerability "
+                    "database + active network audits only."
+                )
+            # ────────────────────────────────────────────────────────────────────
+
+            show_info(f"Auditing security & looking up CVEs for {len(open_services)} active port(s)...")
+
+            async def _lookup(ip, pr, svc, task_id):
                 cves = await engine.lookup_service_cves_async(
-                    pr.service, pr.version, banner=pr.banner, max_results=args.max_cves
+                    service=svc,
+                    version=pr.version,
+                    banner=pr.banner,
+                    max_results=args.max_cves,
+                    port=pr.port,
+                    ip=ip,
+                    audit=audit_enabled,
+                    tls_info=getattr(pr, "tls_info", {}),
                 )
                 if cves:
                     key = f"{ip}:{pr.port}"
@@ -218,7 +253,7 @@ async def run_scan(args):
 
             with create_progress() as progress:
                 task = progress.add_task("Threat & Vulnerability Assessment", total=len(open_services))
-                tasks = [_lookup(ip, pr, task) for ip, pr in open_services]
+                tasks = [_lookup(ip, pr, svc, task) for ip, pr, svc in open_services]
                 await asyncio.gather(*tasks)
 
             show_cve_results(cve_results, show_remediation=getattr(args, "fix", False))
@@ -227,7 +262,8 @@ async def run_scan(args):
     show_summary(host_results, total_time)
 
     # Generate reports
-    scan_data = build_scan_data(target_str, host_results, cve_results)
+    scan_mode = engine.scan_mode if engine is not None else "online"
+    scan_data = build_scan_data(target_str, host_results, cve_results, scan_mode=scan_mode)
 
     if args.output:
         base = args.output.rsplit(".", 1)[0] if "." in args.output else args.output
@@ -300,6 +336,7 @@ def run_quick(args):
     quick_args.open = True
     quick_args.no_cache = False
     quick_args.clear_cache = False
+    quick_args.no_audit = False
     quick_args.persona = "quick"
 
     return quick_args

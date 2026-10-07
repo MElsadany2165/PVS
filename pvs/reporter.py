@@ -95,6 +95,24 @@ def generate_html_report(scan_data: dict, filepath: str):
         "MEDIUM": "#d29922", "LOW": "#3fb950", "UNKNOWN": "#8b949e"
     }
 
+    # Scan mode: 'online' or 'offline' — shown prominently in the report
+    scan_mode = scan_data.get("scan_mode", "online")
+    if scan_mode == "offline":
+        offline_notice_html = """
+<div style="background:#78350f22;border:2px solid #d97706;border-radius:10px;padding:1rem 1.2rem;margin:1rem 0;display:flex;align-items:flex-start;gap:0.8rem;">
+  <span style="font-size:1.5rem;flex-shrink:0;">⚠️</span>
+  <div>
+    <strong style="color:#d97706;font-size:1rem;">OFFLINE MODE — Live CVE Lookups Were Disabled</strong><br>
+    <span style="color:var(--text);font-size:0.9rem;">
+      No internet connection was detected when this scan ran. Live NVD and OSV vulnerability database queries were
+      <strong>skipped</strong>. CVE results shown below come exclusively from the built-in curated offline database and
+      active network audits. To get the full live intelligence picture, reconnect to the internet and rescan.
+    </span>
+  </div>
+</div>"""
+    else:
+        offline_notice_html = ""
+
     # Calculate severity counts
     sev_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
     for host in scan_data.get("hosts", []):
@@ -336,11 +354,20 @@ function switchOs(stepId, osName, btn) {{
 }}
 
 function copyCode(btn) {{
-    const codeBlock = btn.nextElementSibling;
-    const code = codeBlock.innerText;
-    navigator.clipboard.writeText(code);
-    btn.innerText = 'Copied!';
-    setTimeout(() => btn.innerText = 'Copy', 2000);
+    const container = btn.parentElement;
+    const activeBlock = container.querySelector('.code-block.active');
+    if (!activeBlock) return;
+    const code = activeBlock.innerText;
+    navigator.clipboard.writeText(code).then(() => {{
+        btn.innerText = '\u2705 Copied!';
+        btn.style.background = 'var(--success)';
+        btn.style.color = '#fff';
+        setTimeout(() => {{
+            btn.innerText = 'Copy';
+            btn.style.background = 'var(--border)';
+            btn.style.color = 'var(--text)';
+        }}, 2000);
+    }});
 }}
 
 function filterCards() {{
@@ -377,9 +404,12 @@ window.addEventListener('DOMContentLoaded', () => {{
     <div class="meta">
         <strong>Target Matrix:</strong> {target} &nbsp;|&nbsp;
         <strong>Execution Time:</strong> {h(str(timestamp))} &nbsp;|&nbsp;
-        <strong>Audit Engine:</strong> PVS v{h(__version__)}
+        <strong>Audit Engine:</strong> PVS v{h(__version__)} &nbsp;|&nbsp;
+        <strong>Mode:</strong> <span style="color:{'#d97706' if scan_mode == 'offline' else '#3fb950'};font-weight:700;">{'⚠️ OFFLINE (Curated DB Only)' if scan_mode == 'offline' else '✓ ONLINE (Live NVD + OSV)'}</span>
     </div>
 </div>
+
+{offline_notice_html}
 
 <div class="stats">
     <div class="stat-card"><div class="value">{total_hosts}</div><div class="label">Hosts Scanned</div></div>
@@ -413,9 +443,14 @@ window.addEventListener('DOMContentLoaded', () => {{
         scan_time = host_data.get("scan_time", 0)
         ports = host_data.get("ports", [])
 
+        os_guess = h(host_data.get("os_guess", ""))
+        latency = host_data.get("latency_ms", 0.0)
+        os_badge = f'<span class="badge" style="background:#22c55e22;color:#16a34a;margin-left:0.6rem;font-weight:600;font-size:0.8rem;">🏷️ {os_guess}</span>' if os_guess else ''
+        latency_badge = f'<span style="color:var(--muted);font-size:0.8rem;margin-left:0.6rem;">⚡ {latency}ms latency</span>' if latency > 0 else ''
+
         html_content += f"""
 <div class="section">
-    <h2>Host: {ip}{f' ({hostname})' if hostname else ''}</h2>
+    <h2>Host: {ip}{f' ({hostname})' if hostname else ''}{os_badge}{latency_badge}</h2>
     <p style="color:var(--muted);margin-bottom:1rem;">
         Scan completed in {scan_time:.2f}s — {len(ports)} open port(s)
     </p>
@@ -428,7 +463,14 @@ window.addEventListener('DOMContentLoaded', () => {{
             svc = h(port.get("service", ""))
             ver = h(port.get("version", ""))
             banner = port.get("banner", "")
-            
+            tls = port.get("tls_info") or {}
+
+            tls_html = ""
+            if tls:
+                tls_v = h(tls.get("version", "TLS"))
+                tls_c = h(tls.get("cipher", ""))
+                tls_html = f'<div style="margin-top:0.25rem;"><span class="badge" style="background:#3b82f622;color:#2563eb;font-size:0.7rem;">🔒 {tls_v}</span> <span style="font-family:monospace;font-size:0.7rem;color:var(--muted);">{tls_c}</span></div>'
+
             banner_html = ""
             if banner:
                 banner_lines = [h(line.strip()) for line in banner.split('\n') if line.strip()]
@@ -445,6 +487,8 @@ window.addEventListener('DOMContentLoaded', () => {{
                     banner_html = f'<span style="font-family: monospace; font-size: 0.8rem; color: var(--muted);">{preview[:60]}</span>'
             else:
                 banner_html = '<span style="color: var(--muted); font-size: 0.8rem; font-style: italic;">None</span>'
+
+            banner_html += tls_html
 
             html_content += f"""
             <tr>
@@ -492,9 +536,37 @@ window.addEventListener('DOMContentLoaded', () => {{
                             cmd_win = h(step.get("command_windows") or step.get("command", ""))
                             cmd_mac = h(step.get("command_macos") or step.get("command", ""))
 
+                            safety_meta = ""
+                            disr = step.get("disruption_level", "")
+                            est = step.get("estimated_time", "")
+                            if disr or est:
+                                safety_meta = f'<span style="font-size:0.75rem; background:var(--bg); border:1px solid var(--border); padding:0.15rem 0.4rem; border-radius:4px; margin-left:0.5rem; color:var(--muted);">⚡ Disruption: {h(disr)} | ⏱️ Est: {h(est)}</span>'
+
+                            rb_lin = h(step.get("rollback_linux", ""))
+                            rb_win = h(step.get("rollback_windows", ""))
+                            rb_mac = h(step.get("rollback_macos", ""))
+                            rollback_html = ""
+                            if rb_lin or rb_win or rb_mac:
+                                rollback_html = f"""
+                                <details style="margin-top: 0.6rem; font-size: 0.8rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.6rem;">
+                                    <summary style="cursor: pointer; color: var(--muted); font-weight: 600; outline: none;">↩️ Rollback / Undo Procedure</summary>
+                                    <div class="os-tabs" style="margin-top: 0.4rem;">
+                                        <div class="os-tab active" onclick="switchOs('{step_id}-rb', 'linux', this)">🐧 Linux</div>
+                                        <div class="os-tab" onclick="switchOs('{step_id}-rb', 'windows', this)">🪟 Windows</div>
+                                        <div class="os-tab" onclick="switchOs('{step_id}-rb', 'macos', this)">🍏 macOS</div>
+                                    </div>
+                                    <div id="{step_id}-rb">
+                                        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                                        <div class="code-block code-block-linux active"><code>{rb_lin if rb_lin else '# No specific Linux rollback required'}</code></div>
+                                        <div class="code-block code-block-windows"><code>{rb_win if rb_win else '# No specific Windows rollback required'}</code></div>
+                                        <div class="code-block code-block-macos"><code>{rb_mac if rb_mac else '# No specific macOS rollback required'}</code></div>
+                                    </div>
+                                </details>
+                                """
+
                             steps_content += f"""
                             <div class="remediation-step" id="{step_id}">
-                                <div class="step-num">Step {st_num}: {st_title} <span style="font-size:0.7rem; color:var(--muted); font-weight:normal;">[{st_cat}]</span></div>
+                                <div class="step-num">Step {st_num}: {st_title} <span style="font-size:0.7rem; color:var(--muted); font-weight:normal;">[{st_cat}]</span>{safety_meta}</div>
                                 <p style="font-size:0.85rem; color:var(--text);">{st_desc}</p>
                                 
                                 <div class="os-tabs">
@@ -509,6 +581,7 @@ window.addEventListener('DOMContentLoaded', () => {{
                                     <div class="code-block code-block-windows"><code>{cmd_win if cmd_win else '# No specific Windows command required'}</code></div>
                                     <div class="code-block code-block-macos"><code>{cmd_mac if cmd_mac else '# No specific macOS command required'}</code></div>
                                 </div>
+                                {rollback_html}
                             </div>
                             """
 
@@ -522,12 +595,25 @@ window.addEventListener('DOMContentLoaded', () => {{
                         </details>
                         """
 
+                    p_score = cve.get("priority_score", 0.0)
+                    p_level = cve.get("priority_level", "MEDIUM")
+                    p_color = {"CRITICAL": "#ef4444", "HIGH": "#f97316", "MEDIUM": "#eab308", "LOW": "#22c55e"}.get(p_level, "#6b7280")
+                    priority_badge = f'<span class="badge" style="background:{p_color}22;color:{p_color};margin-left:0.4rem;font-weight:700;">Threat Score: {p_score}/100 [{p_level}]</span>' if p_score > 0 else ''
+
+                    epss_score = cve.get("epss_score", 0.0)
+                    epss_pct = cve.get("epss_percentile", 0.0)
+                    epss_badge = f'<span class="badge" style="background:#8b5cf622;color:#7c3aed;margin-left:0.4rem;" title="Exploit Prediction Scoring System: Probability of exploitation in the wild within 30 days">📈 EPSS: {epss_score*100:.1f}% ({epss_pct*100:.0f}th pct)</span>' if epss_score > 0 else ''
+                    active_badge = f'<span class="badge" style="background:#ef444433;color:#ef4444;border:1px solid #ef4444;font-weight:800;margin-left:0.4rem;">🔥 ACTIVE EXPOSURE</span>' if str(cve.get('cve_id', '')).startswith('VULN-') else ''
+
                     html_content += f"""
 <div class="cve-card" style="border-left: 4px solid {color};">
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
         <div>
             <span class="cve-id" style="color:{color}; font-size: 1rem;">{h(cve['cve_id'])}</span>
             <span class="severity" style="background:{color}22;color:{color}; margin-left: 0.5rem;">{sev} ({cve.get('score', 0)})</span>
+            {active_badge}
+            {priority_badge}
+            {epss_badge}
             {kev_badge}
         </div>
         <span style="color:var(--muted); font-size: 0.8rem;">Port {port['port']}/{h(port.get('service',''))} {published_html}</span>
@@ -553,7 +639,7 @@ window.addEventListener('DOMContentLoaded', () => {{
     logger.info(f"HTML report saved: {filepath}")
 
 
-def build_scan_data(target, host_results, cve_results=None):
+def build_scan_data(target, host_results, cve_results=None, scan_mode: str = "online"):
     """Build structured scan data dict from results."""
     hosts_data = []
     for hr in host_results:
@@ -563,6 +649,7 @@ def build_scan_data(target, host_results, cve_results=None):
                 "port": pr.port, "state": pr.state,
                 "service": pr.service, "version": pr.version,
                 "banner": pr.banner,
+                "tls_info": getattr(pr, "tls_info", {}),
             }
             # Attach CVEs if available
             key = f"{hr.ip}:{pr.port}"
@@ -579,6 +666,10 @@ def build_scan_data(target, host_results, cve_results=None):
                             "severity": c.severity, "score": c.score,
                             "vector": c.vector, "published": c.published,
                             "references": c.references,
+                            "epss_score": getattr(c, "epss_score", 0.0),
+                            "epss_percentile": getattr(c, "epss_percentile", 0.0),
+                            "priority_score": getattr(c, "priority_score", 0.0),
+                            "priority_level": getattr(c, "priority_level", "MEDIUM"),
                         })
                 port_entry["cves"] = cves_list
             else:
@@ -587,10 +678,13 @@ def build_scan_data(target, host_results, cve_results=None):
         hosts_data.append({
             "ip": hr.ip, "hostname": hr.hostname,
             "is_up": hr.is_up, "scan_time": hr.scan_time,
+            "os_guess": getattr(hr, "os_guess", ""),
+            "latency_ms": getattr(hr, "latency_ms", 0.0),
             "ports": ports_data,
         })
     return {
         "scanner": "PVS", "version": __version__,
         "scan_time": datetime.now().isoformat(),
         "target": target, "hosts": hosts_data,
+        "scan_mode": scan_mode,  # 'online' | 'offline' — never hide this from the user
     }

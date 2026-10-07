@@ -95,3 +95,37 @@ class TestParseBanner:
         service, version = parse_banner("", 80)
         assert service == "http"
         assert version == ""
+
+
+def test_os_fingerprinting_ttl():
+    """Test OS detection based on packet TTL."""
+    from pvs.scanner import guess_os_from_ttl
+    assert "Linux" in guess_os_from_ttl(64)
+    assert "Windows" in guess_os_from_ttl(128)
+    assert "Cisco" in guess_os_from_ttl(255)
+    assert guess_os_from_ttl(0) == ""
+
+
+def test_os_inference_from_ports():
+    """Test OS inference from open ports and banners."""
+    from pvs.scanner import infer_os_from_ports, PortResult
+
+    # Windows indicators
+    p_smb = PortResult(port=445, state="open", service="microsoft-ds")
+    assert "Windows" in infer_os_from_ports([p_smb])
+
+    # Linux indicators
+    p_ssh = PortResult(port=22, state="open", service="ssh", banner="SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10")
+    assert "Ubuntu" in infer_os_from_ports([p_ssh])
+
+
+def test_port_result_with_tls():
+    """Test PortResult storing TLS certificate audit metadata."""
+    from pvs.scanner import PortResult
+    p = PortResult(
+        port=443, state="open", service="https",
+        tls_info={"version": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384"}
+    )
+    assert p.tls_info["version"] == "TLSv1.3"
+    assert "AES" in p.tls_info["cipher"]
+

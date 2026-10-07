@@ -17,25 +17,65 @@ import urllib.error
 import asyncio
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Set
 
 from .logger import get_logger
-from .nvd_client import NVDClient, CVEEntry, build_cpe
-from .remediation import get_remediation_plan, RemediationPlan
+from .nvd_client import NVDClient, CVEEntry, build_cpe, check_internet_connectivity
+from .remediation import get_remediation_plan, RemediationPlan, analyze_cve_categories
+from .cve_db import find_curated_cves, is_version_affected
+from .auditor import audit_host_port, ActiveVulnerability
 
 logger = get_logger(__name__)
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 OSV_API_BASE = "https://api.osv.dev/v1/query"
+EPSS_API_URL = "https://api.first.org/data/v1/epss"
 
 # User cache path: ~/.pvs/
 PVS_CACHE_DIR = Path.home() / ".pvs"
 PVS_DB_PATH = PVS_CACHE_DIR / "vuln_cache.db"
 
 
+def calculate_threat_score(
+    cvss_score: float,
+    is_kev: bool,
+    epss_score: float,
+    categories: Set[str] = None,
+) -> Tuple[float, str]:
+    """
+    Calculate composite PVS Threat Score (0 - 100) and Priority Level.
+    Combines:
+    - CVSS severity (up to 40 pts)
+    - CISA KEV active exploitation in the wild (+35 pts)
+    - EPSS exploit prediction probability (up to +15 pts)
+    - Critical vulnerability categories (+10 pts)
+    """
+    score = min(10.0, max(0.0, cvss_score)) * 4.0
+    if is_kev:
+        score += 35.0
+    if epss_score:
+        score += min(15.0, epss_score * 15.0)
+    critical_cats = {"rce", "auth_bypass", "deserialization", "buffer_overflow"}
+    if categories and any(c in critical_cats for c in categories):
+        score += 10.0
+
+    final_score = round(min(100.0, score), 1)
+
+    if final_score >= 85.0:
+        level = "CRITICAL"
+    elif final_score >= 70.0:
+        level = "HIGH"
+    elif final_score >= 45.0:
+        level = "MEDIUM"
+    else:
+        level = "LOW"
+
+    return final_score, level
+
+
 @dataclass
 class EnhancedCVEEntry:
-    """Enriched CVE entry with CISA KEV exploit status and step-by-step remediation plan."""
+    """Enriched CVE entry with CISA KEV exploit status, EPSS probability, and remediation plan."""
     cve_id: str
     description: str = ""
     severity: str = "UNKNOWN"
@@ -49,6 +89,12 @@ class EnhancedCVEEntry:
     is_kev: bool = False
     kev_action: str = ""
     kev_description: str = ""
+
+    # EPSS (Exploit Prediction Scoring System) & Smart Priority Scoring
+    epss_score: float = 0.0
+    epss_percentile: float = 0.0
+    priority_score: float = 0.0
+    priority_level: str = "MEDIUM"
 
     # Step-by-Step Remediation Plan
     remediation: Optional[RemediationPlan] = None
@@ -77,6 +123,10 @@ class EnhancedCVEEntry:
             "is_kev": self.is_kev,
             "kev_action": self.kev_action,
             "kev_description": self.kev_description,
+            "epss_score": self.epss_score,
+            "epss_percentile": self.epss_percentile,
+            "priority_score": self.priority_score,
+            "priority_level": self.priority_level,
         }
         if self.remediation:
             data["remediation"] = self.remediation.to_dict()
@@ -119,6 +169,10 @@ class EnhancedCVEEntry:
             is_kev=d.get("is_kev", False),
             kev_action=d.get("kev_action", ""),
             kev_description=d.get("kev_description", ""),
+            epss_score=d.get("epss_score", 0.0),
+            epss_percentile=d.get("epss_percentile", 0.0),
+            priority_score=d.get("priority_score", 0.0),
+            priority_level=d.get("priority_level", "MEDIUM"),
             remediation=rem_plan,
         )
 
@@ -155,6 +209,18 @@ class LocalVulnCache:
                         timestamp REAL NOT NULL
                     )
                 """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS epss_cache (
+                        cve_id TEXT PRIMARY KEY,
+                        epss REAL NOT NULL,
+                        percentile REAL NOT NULL,
+                        timestamp REAL NOT NULL
+                    )
+                """)
+                # Performance indexes for sub-millisecond lookups
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_cve_cache_key ON cve_cache(cache_key)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_kev_cve_id ON cisa_kev(cve_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_epss_cve ON epss_cache(cve_id)")
                 conn.commit()
         except Exception as e:
             logger.warning(f"Could not initialize SQLite vulnerability cache: {e}")
@@ -244,11 +310,43 @@ class LocalVulnCache:
         except Exception as e:
             logger.warning(f"Failed to write KEV entries to cache: {e}")
 
+    def get_epss(self, cve_id: str, max_age_seconds: float = 2592000) -> Optional[Tuple[float, float]]:
+        """Get cached EPSS (epss, percentile) for a CVE ID (default 30 days valid)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT epss, percentile, timestamp FROM epss_cache WHERE cve_id = ?",
+                    (cve_id.upper(),)
+                )
+                row = cursor.fetchone()
+                if row:
+                    epss, pct, ts = row
+                    if time.time() - ts < max_age_seconds:
+                        return float(epss), float(pct)
+        except Exception as e:
+            logger.debug(f"EPSS read error for {cve_id}: {e}")
+        return None
+
+    def set_epss(self, cve_id: str, epss: float, percentile: float):
+        """Store EPSS probability and percentile in cache."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO epss_cache (cve_id, epss, percentile, timestamp) VALUES (?, ?, ?, ?)",
+                    (cve_id.upper(), float(epss), float(percentile), time.time())
+                )
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"EPSS write error for {cve_id}: {e}")
+
     def clear(self):
         """Clear all cached entries."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.cursor().execute("DELETE FROM cve_cache")
+                conn.cursor().execute("DELETE FROM epss_cache")
                 conn.commit()
         except Exception as e:
             logger.warning(f"Error clearing vulnerability cache: {e}")
@@ -266,6 +364,49 @@ class VulnerabilityEngine:
         self.use_cache = use_cache
         self.cache = LocalVulnCache()
         self._kev_updated = False
+        # Run connectivity pre-flight ONCE at engine startup.
+        # This prevents silent fake results when the machine has no internet.
+        self._online: bool = check_internet_connectivity()
+        self.scan_mode: str = "online" if self._online else "offline"
+
+    @staticmethod
+    def _parse_version(version_str: str) -> Optional[Tuple[int, ...]]:
+        """Parse a version string into a comparable tuple of integers."""
+        if not version_str:
+            return None
+        # Clean version: take first token, strip non-numeric suffixes
+        clean = version_str.split()[0].split('(')[0].split('-')[0].strip()
+        parts = []
+        for seg in clean.split('.'):
+            digits = ''.join(c for c in seg if c.isdigit())
+            if digits:
+                parts.append(int(digits))
+        return tuple(parts) if parts else None
+
+    @staticmethod
+    def _version_in_range(detected: str, cve_desc: str) -> bool:
+        """
+        Heuristic check: does the detected version appear potentially affected?
+        If we can't determine, we assume yes (fail-open for safety).
+        """
+        if not detected or not cve_desc:
+            return True  # Can't filter, assume affected
+        desc_lower = cve_desc.lower()
+        # If the CVE description mentions 'before X.Y.Z' or 'prior to X.Y.Z'
+        import re
+        before_match = re.search(r'(?:before|prior to|through|up to)\s+(\d+\.\d+(?:\.\d+)*)', desc_lower)
+        if before_match:
+            threshold_str = before_match.group(1)
+            detected_parts = VulnerabilityEngine._parse_version(detected)
+            threshold_parts = VulnerabilityEngine._parse_version(threshold_str)
+            if detected_parts and threshold_parts:
+                # Pad to same length for comparison
+                max_len = max(len(detected_parts), len(threshold_parts))
+                d = detected_parts + (0,) * (max_len - len(detected_parts))
+                t = threshold_parts + (0,) * (max_len - len(threshold_parts))
+                if d >= t:
+                    return False  # Detected version is at or above fix threshold
+        return True  # Assume affected if uncertain
 
     async def update_cisa_kev_catalog(self, force: bool = False):
         """Fetch and update CISA KEV catalog if outdated (>24h)."""
@@ -337,14 +478,65 @@ class VulnerabilityEngine:
 
         return entries
 
+    async def fetch_epss_batch_async(self, cve_ids: List[str]) -> Dict[str, Tuple[float, float]]:
+        """
+        Fetch EPSS (Exploit Prediction Scoring System) metrics for a list of CVEs.
+        Checks local SQLite cache first, then batches queries to FIRST.org.
+        """
+        results: Dict[str, Tuple[float, float]] = {}
+        missing = []
+
+        for cid in cve_ids:
+            cached = self.cache.get_epss(cid)
+            if cached:
+                results[cid.upper()] = cached
+            else:
+                missing.append(cid)
+
+        if not missing:
+            return results
+
+        # Query FIRST.org in batches of up to 50
+        for i in range(0, len(missing), 50):
+            batch = missing[i:i+50]
+            cve_param = ",".join(batch)
+            url = f"{EPSS_API_URL}?cve={urllib.parse.quote(cve_param)}"
+            try:
+                def _do_get():
+                    req = urllib.request.Request(url, headers={"User-Agent": "PVS/2.0"})
+                    with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        return json.loads(resp.read().decode("utf-8"))
+                data = await asyncio.to_thread(_do_get)
+                if data and "data" in data:
+                    for item in data["data"]:
+                        c_id = item.get("cve", "").upper()
+                        try:
+                            epss_val = float(item.get("epss", 0.0))
+                            pct_val = float(item.get("percentile", 0.0))
+                            results[c_id] = (epss_val, pct_val)
+                            self.cache.set_epss(c_id, epss_val, pct_val)
+                        except (ValueError, TypeError):
+                            pass
+            except Exception as e:
+                logger.debug(f"EPSS query error: {e}")
+
+        return results
+
     def _enrich_cve(
-        self, cve: CVEEntry, service: str, version: str
+        self, cve: CVEEntry, service: str, version: str, port: int = 0,
+        epss_info: Optional[Tuple[float, float]] = None
     ) -> EnhancedCVEEntry:
-        """Enrich standard CVE entry with CISA KEV status and step-by-step remediation plan."""
+        """Enrich standard CVE entry with CISA KEV status, EPSS score, and step-by-step remediation plan."""
         kev_info = self.cache.get_kev(cve.cve_id)
         is_kev = bool(kev_info)
         kev_action = kev_info["required_action"] if kev_info else ""
         kev_desc = kev_info["short_description"] if kev_info else ""
+
+        epss_val = epss_info[0] if epss_info else 0.0
+        pct_val = epss_info[1] if epss_info else 0.0
+
+        categories = analyze_cve_categories(cve.description, cve.cve_id)
+        p_score, p_level = calculate_threat_score(cve.score, is_kev, epss_val, categories)
 
         rem_plan = get_remediation_plan(
             service=service,
@@ -352,6 +544,7 @@ class VulnerabilityEngine:
             cve_id=cve.cve_id,
             cve_description=cve.description,
             severity=cve.severity,
+            port=port,
         )
 
         return EnhancedCVEEntry(
@@ -366,19 +559,31 @@ class VulnerabilityEngine:
             is_kev=is_kev,
             kev_action=kev_action,
             kev_description=kev_desc,
+            epss_score=epss_val,
+            epss_percentile=pct_val,
+            priority_score=p_score,
+            priority_level=p_level,
             remediation=rem_plan,
         )
 
     async def lookup_service_cves_async(
-        self, service: str, version: str = "", banner: str = "", max_results: int = 5
+        self,
+        service: str,
+        version: str = "",
+        banner: str = "",
+        max_results: int = 5,
+        port: int = 0,
+        ip: str = "",
+        audit: bool = True,
+        tls_info: Optional[dict] = None,
     ) -> List[EnhancedCVEEntry]:
         """
-        Main entry point for async service CVE lookup.
-        1. Checks local SQLite cache for instant (<1ms) response.
-        2. Ensures CISA KEV catalog is up to date.
-        3. Queries NVD API by CPE / keyword.
-        4. Falls back to OSV.dev API if NVD fails or returns empty.
-        5. Enriches results with KEV tags & step-by-step remediation plans.
+        Main entry point for async service vulnerability & CVE lookup.
+        1. Executes active, non-destructive network audits (unauth DBs, SMBv1, RDP, cleartext, etc.)
+        2. Queries offline curated high-impact CVE database (<1ms, 0 false positives).
+        3. Checks local persistent SQLite cache for supplementary CVEs.
+        4. Queries NVD API v2.0 / OSV.dev fallback for extended intelligence.
+        5. Enriches findings with CISA KEV tags, EPSS scores, composite Threat Scores, & remediation plans.
         """
         if not service or service == "unknown":
             return []
@@ -386,52 +591,179 @@ class VulnerabilityEngine:
         clean_ver = version.split("(")[0].strip() if version else ""
         cache_key = f"{service.lower()}:{clean_ver.lower()}:{max_results}"
 
-        # 1. Local persistent SQLite cache check
+        # 1. Local persistent SQLite cache check (sub-millisecond instant return)
         if self.use_cache:
             cached = self.cache.get_cves(cache_key)
             if cached is not None:
                 logger.info(f"SQLite cache hit for {service} {version} ({len(cached)} CVEs)")
                 return cached
 
-        # 2. Update CISA KEV catalog in background
-        try:
-            await self.update_cisa_kev_catalog()
-        except Exception:
-            pass
+        all_findings: List[EnhancedCVEEntry] = []
+        seen_ids = set()
 
-        # 3. Query NVD Client
-        raw_cves = await self.nvd_client.lookup_service_cves_async(
-            service=service, version=version, banner=banner, max_results=max_results
-        )
-
-        # 4. OSV.dev fallback if NVD returned no results or was throttled
-        if not raw_cves:
-            query = f"{service} {clean_ver}".strip()
-            logger.info(f"NVD returned no results. Querying OSV fallback for: {query}")
-            osv_cves = await self._search_osv_fallback(query, max_results=max_results)
-            if osv_cves:
-                for entry in osv_cves:
-                    kev_info = self.cache.get_kev(entry.cve_id)
-                    if kev_info:
-                        entry.is_kev = True
-                        entry.kev_action = kev_info["required_action"]
-                        entry.kev_description = kev_info["short_description"]
-                    entry.remediation = get_remediation_plan(
-                        service, version, entry.cve_id, entry.description, entry.severity
+        # 2. Run Active Network Vulnerability Auditing (live host checks)
+        if ip and audit and port > 0:
+            try:
+                active_vulns = await audit_host_port(
+                    ip, port, service, banner=banner, tls_info=tls_info, timeout=2.5
+                )
+                for av in active_vulns:
+                    rem_plan = get_remediation_plan(
+                        service=av.remediation_key,
+                        version=version,
+                        cve_id=av.cve_id,
+                        cve_description=av.description,
+                        severity=av.severity,
+                        port=port,
                     )
-                if self.use_cache:
-                    self.cache.set_cves(cache_key, osv_cves)
-                return osv_cves
-            return []
+                    entry = EnhancedCVEEntry(
+                        cve_id=av.cve_id or av.vuln_id,
+                        description=f"[{av.title}] {av.description} Evidence: {av.evidence}",
+                        severity=av.severity,
+                        score=av.score,
+                        vector="NETWORK",
+                        published="2026",
+                        references=av.references,
+                        affected_products=[f"{service}:{port}"],
+                        is_kev=av.is_kev,
+                        kev_action="Remediate immediately per PVS procedures." if av.is_kev else "",
+                        kev_description=av.title,
+                        epss_score=av.epss_score,
+                        epss_percentile=av.epss_percentile,
+                        priority_score=min(100.0, av.score * 10.0 + (15.0 if av.is_kev else 0.0)),
+                        priority_level=av.severity,
+                        remediation=rem_plan,
+                    )
+                    all_findings.append(entry)
+                    seen_ids.add(entry.cve_id)
+            except Exception as e:
+                logger.debug(f"Active audit error on {ip}:{port}: {e}")
 
-        # 5. Enrich NVD entries
-        enriched = [self._enrich_cve(cve, service, version) for cve in raw_cves]
+        # 2. Curated Offline High-Impact Network CVE Database
+        try:
+            curated = find_curated_cves(service, version, banner=banner)
+            for cc in curated:
+                if cc.cve_id in seen_ids:
+                    continue
+                p_score, p_level = calculate_threat_score(
+                    cvss_score=cc.score,
+                    is_kev=cc.is_kev,
+                    epss_score=cc.epss_score,
+                    categories=set(cc.categories),
+                )
+                rem_plan = get_remediation_plan(
+                    service=service,
+                    version=version,
+                    cve_id=cc.cve_id,
+                    cve_description=cc.description,
+                    severity=cc.severity,
+                    port=port,
+                )
+                c_entry = EnhancedCVEEntry(
+                    cve_id=cc.cve_id,
+                    description=f"[{cc.title}] {cc.description}",
+                    severity=cc.severity,
+                    score=cc.score,
+                    vector="NETWORK",
+                    published="2026",
+                    references=cc.references,
+                    affected_products=[f"{service} {version}".strip()],
+                    is_kev=cc.is_kev,
+                    kev_action="Apply vendor patch or mitigation immediately.",
+                    kev_description=cc.title,
+                    epss_score=cc.epss_score,
+                    epss_percentile=cc.epss_percentile,
+                    priority_score=p_score,
+                    priority_level=p_level,
+                    remediation=rem_plan,
+                )
+                all_findings.append(c_entry)
+                seen_ids.add(c_entry.cve_id)
+        except Exception as e:
+            logger.debug(f"Curated CVE matching error: {e}")
 
-        # Prioritize KEV (actively exploited) CVEs at the top
-        enriched.sort(key=lambda x: (x.is_kev, x.score), reverse=True)
+        # 4. Background KEV Catalog update (only when online)
+        if self._online:
+            try:
+                await self.update_cisa_kev_catalog()
+            except Exception:
+                pass
 
-        # Cache enriched results in SQLite
-        if self.use_cache:
-            self.cache.set_cves(cache_key, enriched)
+        # 5. Supplementary NVD and OSV Lookup — SKIP when offline
+        #    This is the fix for the 'scanning offline produces fake results' bug:
+        #    we explicitly do NOT query NVD/OSV when connectivity check failed.
+        raw_cves = []
+        if self._online:
+            try:
+                raw_cves = await self.nvd_client.lookup_service_cves_async(
+                    service=service, version=version, banner=banner, max_results=max_results
+                )
+            except Exception:
+                pass
+        else:
+            logger.debug(
+                f"[OFFLINE] Skipping NVD/OSV lookup for {service} {version} — no internet connectivity."
+            )
 
-        return enriched
+        if not raw_cves and self._online:
+            query = f"{service} {clean_ver}".strip()
+            try:
+                osv_cves = await self._search_osv_fallback(query, max_results=max_results)
+                if osv_cves:
+                    cve_ids = [e.cve_id for e in osv_cves]
+                    epss_map = {}
+                    try:
+                        epss_map = await self.fetch_epss_batch_async(cve_ids)
+                    except Exception:
+                        pass
+                    for entry in osv_cves:
+                        if entry.cve_id in seen_ids:
+                            continue
+                        kev_info = self.cache.get_kev(entry.cve_id)
+                        if kev_info:
+                            entry.is_kev = True
+                            entry.kev_action = kev_info["required_action"]
+                            entry.kev_description = kev_info["short_description"]
+                        epss_info = epss_map.get(entry.cve_id.upper(), (0.0, 0.0))
+                        entry.epss_score, entry.epss_percentile = epss_info
+                        cats = analyze_cve_categories(entry.description, entry.cve_id)
+                        entry.priority_score, entry.priority_level = calculate_threat_score(
+                            entry.score, entry.is_kev, entry.epss_score, cats
+                        )
+                        entry.remediation = get_remediation_plan(
+                            service, version, entry.cve_id, entry.description, entry.severity, port=port
+                        )
+                        all_findings.append(entry)
+                        seen_ids.add(entry.cve_id)
+            except Exception:
+                pass
+        else:
+            candidate_cves = []
+            for cve in raw_cves:
+                if cve.cve_id in seen_ids:
+                    continue
+                if clean_ver and not self._version_in_range(clean_ver, cve.description):
+                    continue
+                candidate_cves.append(cve)
+
+            cve_ids = [c.cve_id for c in candidate_cves]
+            epss_map = {}
+            if cve_ids:
+                try:
+                    epss_map = await self.fetch_epss_batch_async(cve_ids)
+                except Exception:
+                    pass
+
+            for cve in candidate_cves:
+                enriched_cve = self._enrich_cve(
+                    cve, service, version, port=port, epss_info=epss_map.get(cve.cve_id.upper())
+                )
+                all_findings.append(enriched_cve)
+                seen_ids.add(enriched_cve.cve_id)
+
+        all_findings.sort(key=lambda x: (x.priority_score, x.is_kev, x.score), reverse=True)
+
+        if self.use_cache and all_findings:
+            self.cache.set_cves(cache_key, all_findings)
+
+        return all_findings[:max(max_results, len(all_findings))]
