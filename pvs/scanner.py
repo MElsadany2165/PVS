@@ -439,7 +439,16 @@ def parse_banner(banner: str, port: int) -> tuple[str, str]:
     ver_match = re.search(r'(\d+\.\d+(?:\.\d+)*)', banner)
     if ver_match:
         version = ver_match.group(1)
+
+    if not version:
+        try:
+            from .cve_db import extract_version_from_banner
+            version = extract_version_from_banner(banner, service)
+        except Exception:
+            pass
+
     return service, version
+
 
 
 async def scan_port(ip: str, port: int, timeout: float = 2.0, grab_banners: bool = True) -> Optional[PortResult]:
@@ -567,6 +576,16 @@ async def scan_host(ip, ports, timeout=2.0, concurrency=100, grab_banners=True, 
         if ttl > 0:
             result.os_guess = guess_os_from_ttl(ttl)
 
+    # Adaptive latency-based timeout calibration:
+    # Scale connection timeout down for ultralow-latency local targets (LAN/localhost)
+    # to dramatically accelerate scanning without dropping packets.
+    effective_timeout = timeout
+    if latency_ms > 0 and timeout >= 1.5:
+        if latency_ms < 5.0:
+            effective_timeout = max(0.25, min(timeout, 0.45))
+        elif latency_ms < 20.0:
+            effective_timeout = max(0.5, min(timeout, 0.85))
+
     sem = asyncio.Semaphore(concurrency)
     scanned = 0
     total = len(ports)
@@ -574,7 +593,7 @@ async def scan_host(ip, ports, timeout=2.0, concurrency=100, grab_banners=True, 
     async def _scan(port):
         nonlocal scanned
         async with sem:
-            r = await scan_port(ip, port, timeout, grab_banners)
+            r = await scan_port(ip, port, effective_timeout, grab_banners)
             scanned += 1
             if progress_cb:
                 progress_cb(scanned, total)

@@ -92,6 +92,9 @@ class NetworkPosture:
     total_active_exposures: int = 0
     attack_surface: List[AttackSurfaceEntry] = field(default_factory=list)
     insights: List[NetworkInsight] = field(default_factory=list)
+    root_cause_actions: List[dict] = field(default_factory=list)
+    attack_chains: List[dict] = field(default_factory=list)
+    roi_quick_wins: List[dict] = field(default_factory=list)
     executive_summary: str = ""
     scan_mode: str = "online"
 
@@ -110,6 +113,9 @@ class NetworkPosture:
             "total_active_exposures": self.total_active_exposures,
             "attack_surface": [a.to_dict() for a in self.attack_surface],
             "insights": [i.to_dict() for i in self.insights],
+            "root_cause_actions": self.root_cause_actions,
+            "attack_chains": self.attack_chains,
+            "roi_quick_wins": self.roi_quick_wins,
             "executive_summary": self.executive_summary,
             "scan_mode": self.scan_mode,
         }
@@ -456,7 +462,39 @@ def _analyze_vuln_patterns(cve_results: dict) -> List[NetworkInsight]:
             icon="🔥",
         ))
 
+    # Detect Container / Host Breakout risk
+    has_docker = any("2375" in k or "docker" in str(v).lower() for k, v in cve_results.items())
+    if has_docker:
+        insights.append(NetworkInsight(
+            category="critical_action",
+            title="Container Breakout Risk: Docker Daemon Unauthenticated TCP Socket",
+            description=(
+                "Docker daemon API is exposed without TLS or authentication on port 2375. "
+                "Any network user can issue REST commands to create root containers mounting the host "
+                "filesystem. Solution: Bind exclusively to local Unix socket /var/run/docker.sock or enforce TLS."
+            ),
+            priority=99,
+            icon="🐳",
+        ))
+
+    # Detect Ransomware & Worm Propagation Risk
+    has_smbv1 = any("smbv1" in str(v).lower() or "cve-2017-0143" in str(v).lower() or "445" in k for k, v in cve_results.items())
+    has_rdp_no_nla = any("rdp" in str(v).lower() or "3389" in k for k, v in cve_results.items())
+    if has_smbv1 and has_rdp_no_nla:
+        insights.append(NetworkInsight(
+            category="critical_action",
+            title="Ransomware Vector Cluster: SMBv1 + RDP without NLA",
+            description=(
+                "Both legacy SMBv1 and unauthenticated RDP negotiation were flagged. "
+                "This combination is the classic attack signature targeted by ransomware worms "
+                "(WannaCry, EternalBlue, BlueKeep). Solution: Run 'pvs fix' to disable SMBv1 and enforce NLA immediately."
+            ),
+            priority=97,
+            icon="🪱",
+        ))
+
     return insights
+
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -590,6 +628,46 @@ def _generate_executive_summary(posture: "NetworkPosture") -> str:
     return " ".join(parts)
 
 
+def _detect_attack_chains(host_results, cve_results: dict) -> List[dict]:
+    """
+    Synthesize multi-stage exploitation graphs and attack chains.
+    Connects entry-point exposures (e.g. unauthenticated Redis/Docker, anonymous FTP, cleartext)
+    with lateral movement / persistence pivots (e.g. SSH, SMB, RDP).
+    """
+    chains = []
+    cve_results = cve_results or {}
+    for hr in host_results:
+        entry_points = []
+        pivots = []
+        for pr in hr.ports:
+            svc = (pr.service or "").lower()
+            if pr.port in (6379, 2375, 27017, 9200, 11211, 21):
+                entry_points.append((pr.port, svc or f"port-{pr.port}"))
+            elif pr.port in (22, 445, 139, 3389, 5985, 5986):
+                pivots.append((pr.port, svc or f"port-{pr.port}"))
+
+        # Check if CVEs contain RCE or Auth Bypass
+        for target_key, cves in cve_results.items():
+            if target_key.startswith(f"{hr.ip}:"):
+                for c in cves:
+                    cid = c.cve_id if hasattr(c, "cve_id") else c.get("cve_id", "")
+                    sev = (c.severity if hasattr(c, "severity") else c.get("severity", "")).upper()
+                    if sev in ("CRITICAL", "HIGH"):
+                        port_num = int(target_key.split(":")[1]) if ":" in target_key else 0
+                        entry_points.append((port_num, f"High Risk Service ({cid})"))
+
+        if entry_points and pivots:
+            chains.append({
+                "host": hr.ip,
+                "title": f"Initial Access -> Pivot Compromise Vector",
+                "stage_1_entry": f"Initial Access via {entry_points[0][1]} on port {entry_points[0][0]}",
+                "stage_2_pivot": f"Lateral Movement & Persistence via {pivots[0][1]} on port {pivots[0][0]}",
+                "impact": "Unrestricted perimeter entry allows attacker to establish foothold and pivot across subnet.",
+                "severity": "CRITICAL",
+            })
+    return chains
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Main Brain Analysis Entry Point
 # ────────────────────────────────────────────────────────────────────────────
@@ -669,6 +747,47 @@ def analyze_scan_results(
     posture.insights.extend(_analyze_vuln_patterns(cve_results))
     posture.insights.extend(_generate_offline_insights(scan_mode))
 
+    # ── Multi-Stage Attack Chains ────────────────────────────────────────
+    attack_chains = _detect_attack_chains(host_results, cve_results)
+    posture.attack_chains = attack_chains
+    if attack_chains:
+        posture.insights.append(NetworkInsight(
+            category="critical_action",
+            title=f"Multi-Stage Attack Chain Detected ({len(attack_chains)} path(s))",
+            description=(
+                f"Identified viable lateral movement path(s): unauthenticated or high-severity "
+                f"entry points co-located with remote management protocols (SSH/SMB/RDP). "
+                f"An external compromise allows an attacker to pivot internally."
+            ),
+            affected_hosts=[ac["host"] for ac in attack_chains],
+            priority=96,
+            icon="⛓️",
+        ))
+
+    # ── Root Cause Remediation Synthesis ────────────────────────────────
+    try:
+        from .remediation_engine import group_vulnerabilities_by_root_cause
+        root_causes = group_vulnerabilities_by_root_cause(cve_results)
+        posture.root_cause_actions = [rc.to_dict() for rc in root_causes]
+        posture.roi_quick_wins = [rc.to_dict() for rc in root_causes[:3]]
+        if root_causes:
+            quick_wins_count = min(3, len(root_causes))
+            total_reduction = sum(rc.risk_reduction_points for rc in root_causes[:quick_wins_count])
+            posture.insights.append(NetworkInsight(
+                category="critical_action",
+                title=f"Root-Cause Consolidation: {len(root_causes)} Unified Action(s)",
+                description=(
+                    f"Synthesized {posture.total_vulns} detected vulnerabilities into {len(root_causes)} "
+                    f"root-cause component fixes. Applying the Top {quick_wins_count} High-Impact Action(s) "
+                    f"eliminates up to {min(95.0, round(total_reduction, 1))}% of immediate exploit risk."
+                ),
+                affected_hosts=list({rc.host for rc in root_causes}),
+                priority=98,
+                icon="🎯",
+            ))
+    except Exception as e:
+        logger.debug(f"Root cause aggregation error: {e}")
+
     # Sort insights by priority descending
     posture.insights.sort(key=lambda x: x.priority, reverse=True)
 
@@ -690,7 +809,9 @@ def analyze_scan_results(
 
     logger.info(
         f"Brain analysis complete: risk={posture.risk_score}/100 ({posture.risk_level}), "
-        f"{len(posture.insights)} insights, {len(posture.attack_surface)} attack surface entries"
+        f"{len(posture.insights)} insights, {len(posture.attack_surface)} attack surface entries, "
+        f"{len(posture.root_cause_actions)} root cause actions"
     )
 
     return posture
+

@@ -320,7 +320,8 @@ def show_post_scan_actions(cve_results: dict, html_path: str = None):
         if low > 0:
             action_text.append(f"    • {low} Low severity\n", style="green")
 
-        action_text.append("\n  Step-by-step fix procedures are provided in the HTML report.\n", style="dim")
+        action_text.append("\n  💡 [bold cyan]Remediation Solution Available:[/bold cyan]\n", style="bold cyan")
+        action_text.append("     Run [bold white]pvs fix[/bold white] for guided root-cause fixes and automated script export (.sh / .ps1).\n", style="white")
 
     console.print(Panel(
         action_text,
@@ -329,6 +330,47 @@ def show_post_scan_actions(cve_results: dict, html_path: str = None):
         box=box.ROUNDED,
         padding=(0, 1),
     ))
+
+
+def show_root_cause_solutions(root_causes: list):
+    """Display consolidated root-cause remediation solution cards in CLI."""
+    if not root_causes:
+        return
+
+    from rich.table import Table
+    table = Table(
+        title="[bold cyan]🛠️ Consolidated Root-Cause Remediation Solutions[/bold cyan]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+    )
+    table.add_column("Target / Component", style="bold white", width=24)
+    table.add_column("Severity", justify="center", width=12)
+    table.add_column("Impact & Root Cause", style="dim", width=36)
+    table.add_column("Immediate Fix Command (Primary)", style="bold bright_green")
+
+    for fix in root_causes[:5]:
+        fix_dict = fix if isinstance(fix, dict) else fix.to_dict()
+        sev = fix_dict.get("max_severity", "HIGH")
+        color = "bold bright_red" if sev == "CRITICAL" else ("bold red" if sev == "HIGH" else "yellow")
+        
+        # Primary command based on current OS
+        if sys.platform == "win32":
+            cmd = fix_dict.get("command_windows", "").splitlines()[0] if fix_dict.get("command_windows") else "See playbook"
+        else:
+            cmd = fix_dict.get("command_linux", "").splitlines()[0] if fix_dict.get("command_linux") else "See playbook"
+        
+        table.add_row(
+            fix_dict.get("component", ""),
+            f"[{color}]{sev}[/]",
+            fix_dict.get("root_cause_summary", ""),
+            cmd[:70] + ("..." if len(cmd) > 70 else ""),
+        )
+
+    console.print()
+    console.print(table)
+
 
 
 def create_progress():

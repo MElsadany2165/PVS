@@ -1008,6 +1008,151 @@ SERVICE_REMEDIATION_KB: Dict[str, dict] = {
             },
         ],
     },
+    "jenkins": {
+        "summary": "Secure Jenkins by disabling vulnerable built-in CLI commands (CVE-2024-23897), enforcing Matrix authentication, blocking public port 8080 access, and updating to latest LTS release.",
+        "steps": [
+            {
+                "title": "Disable Vulnerable CLI Interface (CVE-2024-23897 Mitigation)",
+                "description": "Disable the args4j-based built-in CLI interface via JVM parameter to prevent unauthenticated arbitrary file read and RCE.",
+                "command_linux": "sudo mkdir -p /etc/systemd/system/jenkins.service.d\necho -e '[Service]\\nEnvironment=\"JAVA_OPTS=-Djenkins.CLI.disabled=true\"' | sudo tee /etc/systemd/system/jenkins.service.d/override.conf\nsudo systemctl daemon-reload && sudo systemctl restart jenkins",
+                "command_windows": "$xmlPath = 'C:\\Program Files\\Jenkins\\jenkins.xml'\nif (Test-Path $xmlPath) { $xml = [xml](Get-Content $xmlPath); $xml.service.arguments = $xml.service.arguments + ' -Djenkins.CLI.disabled=true'; $xml.Save($xmlPath); Restart-Service jenkins }",
+                "command_macos": "brew services restart jenkins-lts",
+                "category": "workaround",
+            },
+            {
+                "title": "Update Jenkins to Latest Security LTS",
+                "description": "Upgrade Jenkins package to a patched LTS release (2.442+ or 2.426.3+).",
+                "command_linux": "sudo apt update && sudo apt install --only-upgrade jenkins -y 2>/dev/null || sudo dnf upgrade jenkins -y 2>/dev/null",
+                "command_windows": "winget upgrade --name 'Jenkins' --accept-package-agreements",
+                "command_macos": "brew update && brew upgrade jenkins-lts",
+                "category": "patch",
+            },
+            {
+                "title": "Firewall Isolation for Port 8080",
+                "description": "Restrict Jenkins access to local management network only.",
+                "command_linux": "sudo ufw deny 8080/tcp && sudo ufw allow from 10.0.0.0/8 to any port 8080 proto tcp && sudo ufw reload",
+                "command_windows": "New-NetFirewallRule -Name 'Block-Jenkins-Public' -DisplayName 'Block Public Jenkins' -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Block",
+                "command_macos": "echo 'block in proto tcp from any to any port 8080' | sudo tee -a /etc/pf.anchors/jenkins && sudo pfctl -f /etc/pf.conf",
+                "category": "firewall",
+            },
+            {
+                "title": "Verify Jenkins Security",
+                "description": "Confirm the CLI interface is disabled and authentication is required.",
+                "command_linux": "curl -sI http://127.0.0.1:8080/cli | grep -iE '404|403'",
+                "command_windows": "curl.exe -sI http://127.0.0.1:8080/cli",
+                "command_macos": "curl -sI http://127.0.0.1:8080/cli",
+                "category": "verify",
+            },
+        ],
+    },
+    "log4j": {
+        "summary": "Mitigate Log4Shell (CVE-2021-44228) and JNDI injection by disabling message lookups via environment flag, blocking outbound LDAP/RMI ports, and updating log4j-core to 2.17.1+.",
+        "steps": [
+            {
+                "title": "Disable JNDI Message Lookups (Log4Shell Mitigation)",
+                "description": "Set system-wide environment variable and JVM flags to prevent JNDI injection.",
+                "command_linux": "echo 'LOG4J_FORMAT_MSG_NO_LOOKUPS=true' | sudo tee -a /etc/environment\nexport LOG4J_FORMAT_MSG_NO_LOOKUPS=true",
+                "command_windows": "[System.Environment]::SetEnvironmentVariable('LOG4J_FORMAT_MSG_NO_LOOKUPS', 'true', 'Machine')",
+                "command_macos": "echo 'export LOG4J_FORMAT_MSG_NO_LOOKUPS=true' | sudo tee -a /etc/profile",
+                "category": "workaround",
+            },
+            {
+                "title": "Block Outbound LDAP and RMI Egress",
+                "description": "Prevent compromised Java processes from reaching external attacker LDAP/RMI endpoints.",
+                "command_linux": "sudo iptables -A OUTPUT -p tcp -m multiport --dports 389,636,1389,1099 -j DROP",
+                "command_windows": "New-NetFirewallRule -Name 'Block-JNDI-Outbound' -DisplayName 'Block JNDI Egress' -Direction Outbound -Protocol TCP -RemotePort 389,636,1389,1099 -Action Block",
+                "command_macos": "echo 'block out proto tcp to any port {389, 636, 1389, 1099}' | sudo tee -a /etc/pf.anchors/log4j && sudo pfctl -f /etc/pf.conf",
+                "category": "firewall",
+            },
+            {
+                "title": "Verify Log4j Configuration",
+                "description": "Confirm the environment variable is active across shells.",
+                "command_linux": "env | grep LOG4J_FORMAT_MSG_NO_LOOKUPS",
+                "command_windows": "[System.Environment]::GetEnvironmentVariable('LOG4J_FORMAT_MSG_NO_LOOKUPS', 'Machine')",
+                "command_macos": "env | grep LOG4J_FORMAT_MSG_NO_LOOKUPS",
+                "category": "verify",
+            },
+        ],
+    },
+    "spring": {
+        "summary": "Mitigate Spring4Shell (CVE-2022-22965) by updating Spring Framework to 5.3.18+ / Spring Boot to 2.6.6+, and hardening Tomcat classloader bindings.",
+        "steps": [
+            {
+                "title": "Update Spring Boot Dependencies",
+                "description": "Upgrade Spring dependencies to patched versions (Spring Boot 2.6.6+ or 2.5.12+).",
+                "command_linux": "mvn versions:use-latest-releases -Dincludes='org.springframework.boot:*' 2>/dev/null || ./gradlew dependencyUpdates 2>/dev/null",
+                "command_windows": "mvn.cmd versions:use-latest-releases -Dincludes='org.springframework.boot:*'",
+                "command_macos": "mvn versions:use-latest-releases -Dincludes='org.springframework.boot:*'",
+                "category": "patch",
+            },
+            {
+                "title": "Verify Spring Dependencies",
+                "description": "Check dependency tree for vulnerable spring-beans or spring-webmvc versions.",
+                "command_linux": "mvn dependency:tree 2>/dev/null | grep -iE 'spring-webmvc|spring-beans'",
+                "command_windows": "mvn.cmd dependency:tree | Select-String 'spring-webmvc'",
+                "command_macos": "mvn dependency:tree | grep -iE 'spring-webmvc'",
+                "category": "verify",
+            },
+        ],
+    },
+    "mariadb": {
+        "summary": "Harden MariaDB server by disabling arbitrary WSREP provider loading (CVE-2021-27928), binding strictly to localhost, and executing security baseline.",
+        "steps": [
+            {
+                "title": "Bind to Localhost and Disable WSREP Arbitrary Loading",
+                "description": "Prevent remote connections and disable cluster provider loading if running standalone.",
+                "command_linux": "sudo sed -i 's/^#\\?bind-address.*/bind-address = 127.0.0.1/' /etc/mysql/mariadb.conf.d/50-server.cnf 2>/dev/null || true\necho 'wsrep_on=OFF' | sudo tee -a /etc/mysql/mariadb.conf.d/60-hardening.cnf\nsudo systemctl restart mariadb",
+                "command_windows": "$ini = 'C:\\Program Files\\MariaDB\\data\\my.ini'\nif (Test-Path $ini) { Add-Content $ini \"`nbind-address = 127.0.0.1\"; Restart-Service MariaDB }",
+                "command_macos": "echo 'bind-address = 127.0.0.1' | sudo tee -a /usr/local/etc/my.cnf && brew services restart mariadb",
+                "category": "workaround",
+            },
+            {
+                "title": "Update MariaDB Server",
+                "description": "Upgrade MariaDB to latest security patch level.",
+                "command_linux": "sudo apt update && sudo apt install --only-upgrade mariadb-server mariadb-client -y 2>/dev/null || sudo dnf upgrade mariadb-server -y",
+                "command_windows": "winget upgrade --name 'MariaDB' --accept-package-agreements",
+                "command_macos": "brew update && brew upgrade mariadb",
+                "category": "patch",
+            },
+            {
+                "title": "Verify MariaDB Listening State",
+                "description": "Confirm MariaDB is only listening on 127.0.0.1.",
+                "command_linux": "sudo ss -tlnp | grep 3306\nsudo mariadb -e \"SHOW VARIABLES LIKE 'bind_address';\"",
+                "command_windows": "netstat -an | findstr 3306",
+                "command_macos": "sudo lsof -iTCP:3306 -sTCP:LISTEN",
+                "category": "verify",
+            },
+        ],
+    },
+    "kubernetes": {
+        "summary": "Harden Kubernetes cluster by disabling anonymous authentication on kube-apiserver and kubelet, restricting API server ports (6443/8001), and enforcing strict RBAC.",
+        "steps": [
+            {
+                "title": "Disable Anonymous Authentication on API Server",
+                "description": "Ensure --anonymous-auth=false and --insecure-port=0 in kube-apiserver manifest.",
+                "command_linux": "sudo sed -i 's/--anonymous-auth=true/--anonymous-auth=false/' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true\nsudo sed -i 's/--insecure-port=[0-9]*/--insecure-port=0/' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true",
+                "command_windows": "Write-Host 'Ensure kube-apiserver runs with --anonymous-auth=false and RBAC enabled.'",
+                "command_macos": "kubectl config current-context",
+                "category": "workaround",
+            },
+            {
+                "title": "Firewall Isolation for Port 6443",
+                "description": "Block public internet exposure of Kubernetes API server.",
+                "command_linux": "sudo ufw deny 6443/tcp && sudo ufw allow from 10.0.0.0/8 to any port 6443 proto tcp && sudo ufw reload",
+                "command_windows": "New-NetFirewallRule -Name 'Block-K8s-Public' -DisplayName 'Block Public K8s' -Direction Inbound -Protocol TCP -LocalPort 6443 -Action Block",
+                "command_macos": "echo 'block in proto tcp from any to any port 6443' | sudo tee -a /etc/pf.anchors/k8s && sudo pfctl -f /etc/pf.conf",
+                "category": "firewall",
+            },
+            {
+                "title": "Verify API Server Security",
+                "description": "Confirm anonymous access is rejected with 401 Unauthorized.",
+                "command_linux": "curl -k -sI https://127.0.0.1:6443/api/v1/namespaces | grep -iE '401|403'",
+                "command_windows": "curl.exe -k -sI https://127.0.0.1:6443/api/v1/namespaces",
+                "command_macos": "curl -k -sI https://127.0.0.1:6443/api/v1/namespaces",
+                "category": "verify",
+            },
+        ],
+    },
     "unauth_redis": {
         "summary": "Secure Redis by enabling authentication, binding exclusively to localhost, and renaming or disabling dangerous administrative commands.",
         "steps": [
@@ -1511,7 +1656,7 @@ _SERVICE_ALIAS_MAP: Dict[str, str] = {
     "http-proxy": "nginx", "http-alt": "http", "https-alt": "http",
     "samba": "smb", "netbios-ssn": "smb", "netbios-ns": "smb",
     "netbios-dgm": "smb", "microsoft-ds": "smb",
-    "mariadb": "mysql", "mysql-proxy": "mysql",
+    "mariadb": "mariadb", "mysql-proxy": "mysql",
     "postgres": "postgresql",
     "ftp-data": "ftp", "vsftpd": "ftp", "proftpd": "ftp", "pure-ftpd": "ftp",
     "openssh": "ssh", "dropbear": "ssh",
@@ -1520,9 +1665,12 @@ _SERVICE_ALIAS_MAP: Dict[str, str] = {
     "mongod": "mongodb", "memcache": "memcached",
     "mssql": "mysql", "mssql-m": "mysql", "oracle": "mysql",
     "snmp-trap": "snmp",
-    "docker-proxy": "docker", "containerd": "docker", "k8s": "docker", "kubernetes": "docker",
+    "docker-proxy": "docker", "containerd": "docker",
+    "k8s": "kubernetes", "kubernetes": "kubernetes",
+    "jenkins": "jenkins", "log4j": "log4j", "spring": "spring",
     "web-admin": "http",
 }
+
 
 
 def _resolve_service_alias(service: str) -> str:

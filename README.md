@@ -376,6 +376,8 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 | `pvs` | `pvs` or `pvs wizard` | Launches interactive 4-persona guided assistant |
 | `pvs quick` | `pvs quick [target]` | Zero-config 1-command home network scan with auto-open HTML report |
 | `pvs scan` | `pvs scan <target> [options]` | Direct CLI port scanner, service fingerprinter, and threat auditor |
+| `pvs fix` | `pvs fix [target] [--script <path>]` | Interactive threat resolver, root-cause solver & automated script generator (.sh / .ps1) |
+| `pvs verify` | `pvs verify <target> <port>` | Live re-test a port to verify if a remediation successfully eliminated the threat |
 | `pvs info` | `pvs info <port\|service>` | Looks up well-known port numbers and service names |
 | `pvs shortcut` | `pvs shortcut` | Creates a Desktop launcher shortcut for Windows |
 
@@ -391,8 +393,9 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 | `--no-cve` | | Disable CVE and threat lookups (port scan only) | `off` |
 | `--fix` | `--remediation` | Display single service remediation procedure summary in CLI output | `enabled` |
 | `--no-fix` | | Hide step-by-step fix procedures in CLI output | `off` |
+| `--export-script` | | Auto-generate and save ready-to-run remediation script (`.sh` or `.ps1`) | `off` |
 | `--open` | | Auto-open generated HTML report in browser upon completion | `off` |
-| `--timeout` | `-t` | Connection response timeout in seconds | `2.0` |
+| `--timeout` | `-t` | Connection response timeout in seconds (calibrated dynamically by RTT) | `2.0` |
 | `--concurrency` | `-c` | Max simultaneous concurrent sockets | `100` |
 | `--format` | `-f` | Report format (`html`, `json`, `csv`, `all`) | `html` |
 | `--output` | `-o` | Custom report file output path | auto-generated |
@@ -405,6 +408,7 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 | `--no-banner-grab` | | Skip service version & banner detection | `off` |
 | `--yes` | `-y` | Skip confirmation prompt on large (>10,000 probe) scans | `off` |
 | `-q, --quiet` | `-q` | Suppress CLI banner and header output | `off` |
+
 
 ---
 

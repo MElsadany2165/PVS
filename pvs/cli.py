@@ -77,6 +77,20 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("-f", "--format", default="html", choices=["json", "csv", "html", "all"],
                              help="Report format (default: html)")
     scan_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    scan_parser.add_argument("--export-script", help="Auto-generate and save ready-to-run remediation script (.sh or .ps1) for all findings")
+
+    # --- fix command ---
+    fix_parser = subparsers.add_parser("fix", help="Interactive threat resolver, root-cause solver & script generator")
+    fix_parser.add_argument("target", nargs="?", default=None, help="Target host to fix (default: latest scan target or '127.0.0.1')")
+    fix_parser.add_argument("--script", "-s", help="Path to export automated remediation script (.sh / .ps1)")
+    fix_parser.add_argument("--os", choices=["auto", "linux", "windows", "macos"], default="auto", help="Target operating system for generated scripts")
+
+    # --- verify command ---
+    verify_parser = subparsers.add_parser("verify", help="Live re-test a port to verify if a remediation eliminated the threat")
+    verify_parser.add_argument("target", help="Target host (e.g. 127.0.0.1)")
+    verify_parser.add_argument("port", type=int, help="Port number to verify")
+    verify_parser.add_argument("--service", default="", help="Service name (e.g. redis, ssh, http)")
+    verify_parser.add_argument("--vuln", default="", help="Vulnerability ID to verify (e.g. VULN-UNAUTH-REDIS)")
 
     # --- info command ---
     info_parser = subparsers.add_parser("info", help="Show information about a specific port or service")
@@ -272,6 +286,23 @@ async def run_scan(args):
     )
     show_brain_insights(brain_posture)
 
+    # ── Root-Cause Solution Summary ───────────────────────────────────────
+    if getattr(brain_posture, "root_cause_actions", None):
+        from pvs.display import show_root_cause_solutions
+        show_root_cause_solutions(brain_posture.root_cause_actions)
+
+    export_script_path = getattr(args, "export_script", None)
+    if export_script_path and cve_results:
+        from pvs.remediation_engine import generate_remediation_script
+        _, script_content = generate_remediation_script(cve_results, target_ip=target_str)
+        try:
+            with open(export_script_path, "w", encoding="utf-8") as f:
+                f.write(script_content)
+            show_info(f"Automated remediation script exported: {export_script_path}")
+        except Exception as e:
+            show_error(f"Could not export remediation script: {e}")
+
+
     # Generate reports
     scan_data = build_scan_data(target_str, host_results, cve_results, scan_mode=scan_mode, brain_posture=brain_posture)
 
@@ -412,6 +443,104 @@ def run_shortcut(args):
     return 0
 
 
+def run_fix(args):
+    """Interactive threat resolver & automated script generator."""
+    from pvs.remediation_engine import group_vulnerabilities_by_root_cause, generate_remediation_script
+    import json
+    import glob
+
+    console.print("\n[bold cyan]═══ PVS Interactive Remediation Assistant ═══[/bold cyan]")
+    
+    # 1. Look for most recent scan report in reports/
+    report_files = sorted(glob.glob("reports/PVS-*.json"), reverse=True)
+    cve_results = {}
+    target = getattr(args, "target", None) or "127.0.0.1"
+
+    if report_files:
+        try:
+            with open(report_files[0], "r", encoding="utf-8") as f:
+                data = json.load(f)
+                target = data.get("target", target)
+                for host in data.get("hosts", []):
+                    hip = host.get("ip", target)
+                    for port_info in host.get("ports", []):
+                        pnum = port_info.get("port")
+                        cvs = port_info.get("cves", [])
+                        if cvs:
+                            cve_results[f"{hip}:{pnum}"] = cvs
+        except Exception:
+            pass
+
+    if not cve_results:
+        show_info(f"No previous scan results found. To scan and resolve threats, run: pvs scan {target}")
+        return 0
+
+    root_causes = group_vulnerabilities_by_root_cause(cve_results)
+    if not root_causes:
+        show_info("No actionable vulnerabilities detected in the latest audit!")
+        return 0
+
+    from pvs.display import show_root_cause_solutions
+    show_root_cause_solutions(root_causes)
+
+    export_path = getattr(args, "script", None)
+    os_pref = getattr(args, "os", "auto")
+    if export_path:
+        fname, content = generate_remediation_script(cve_results, target_ip=target, os_target=os_pref)
+        out_file = export_path
+        with open(out_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        show_info(f"Automated remediation script saved: {out_file}")
+        console.print(f"  [bright_green]✅ Run with:[/] {'sudo bash ' + out_file if os_pref != 'windows' else 'powershell -ExecutionPolicy Bypass -File ' + out_file}")
+        return 0
+
+    # Interactive choice
+    console.print("\n  [bold cyan]Options:[/bold cyan]")
+    console.print("  [white][1..N][/white] Inspect detailed commands and rollback for a specific solution")
+    console.print("  [bold green][A][/bold green]   Export automated 1-click remediation script (.sh / .ps1)")
+    console.print("  [dim][Q]   Quit[/dim]\n")
+
+    try:
+        choice = input("  Select option [A/1/Q]: ").strip().upper()
+        if choice == "A":
+            fname, content = generate_remediation_script(cve_results, target_ip=target, os_target=os_pref)
+            out_file = f"reports/{fname}"
+            os.makedirs("reports", exist_ok=True)
+            with open(out_file, "w", encoding="utf-8") as f:
+                f.write(content)
+            show_info(f"Exported ready-to-run script: {out_file}")
+            console.print(f"  [bright_green]✅ Ready to run:[/] {'sudo bash ' + out_file if sys.platform != 'win32' else 'powershell -ExecutionPolicy Bypass -File ' + out_file}")
+        elif choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(root_causes):
+                rc = root_causes[idx]
+                console.print(f"\n[bold cyan]─── Solution: {rc.component} ───[/bold cyan]")
+                console.print(f"  [bold]Root Cause:[/] {rc.root_cause_summary}")
+                console.print(f"  [bold]Disruption:[/] {rc.disruption_level} ({rc.estimated_time})")
+                console.print(f"\n  [bold green]Linux Command:[/bold green]\n{rc.command_linux}")
+                console.print(f"\n  [bold blue]Windows PowerShell Command:[/bold blue]\n{rc.command_windows}")
+                console.print(f"\n  [bold yellow]Rollback Instructions:[/bold yellow]\n{rc.rollback_linux or rc.rollback_windows}")
+                console.print(f"\n  [bold cyan]Verification Test:[/bold cyan]\n  {rc.verification_command}\n")
+    except (KeyboardInterrupt, EOFError):
+        pass
+
+    return 0
+
+
+def run_verify(args):
+    """Actively verify if a remediation eliminated the threat."""
+    from pvs.remediation_engine import verify_remediation_live
+    show_info(f"Probing {args.target}:{args.port} to verify remediation status...")
+    result = asyncio.run(verify_remediation_live(args.target, args.port, service=args.service, vuln_id=args.vuln))
+    if result.get("verified"):
+        console.print(f"\n  [bold bright_green]✅ SUCCESS: {result.get('message')}[/bold bright_green]\n")
+    else:
+        console.print(f"\n  [bold bright_red]❌ NOT RESOLVED: {result.get('message')}[/bold bright_red]")
+        if result.get("evidence"):
+            console.print(f"  [dim]Evidence: {result.get('evidence')}[/dim]\n")
+    return 0
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -445,12 +574,17 @@ def main():
         except KeyboardInterrupt:
             show_info("\nScan interrupted by user.")
             return 130
+    elif args.command == "fix":
+        return run_fix(args)
+    elif args.command == "verify":
+        return run_verify(args)
     elif args.command == "info":
         return run_info(args)
     elif args.command == "shortcut":
         return run_shortcut(args)
 
     return 0
+
 
 
 if __name__ == "__main__":

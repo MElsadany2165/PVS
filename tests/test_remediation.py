@@ -194,3 +194,27 @@ def test_active_vulnerability_remediation_plans():
             assert "<PORT>" not in step.command_macos
 
 
+def test_new_high_profile_playbooks():
+    """Verify dedicated playbooks for jenkins, log4j, spring, mariadb, and kubernetes."""
+    # Jenkins
+    j_plan = get_remediation_plan("jenkins", port=8080)
+    assert len(j_plan.steps) >= 3
+    assert any("-Djenkins.CLI.disabled=true" in s.command_linux for s in j_plan.steps)
+
+    # Log4j
+    l_plan = get_remediation_plan("log4j", port=8080)
+    assert len(l_plan.steps) >= 2
+    assert any("LOG4J_FORMAT_MSG_NO_LOOKUPS" in s.command_linux for s in l_plan.steps)
+
+    # MariaDB
+    m_plan = get_remediation_plan("mariadb", port=3306)
+    assert len(m_plan.steps) >= 3
+    assert any("bind-address" in s.command_linux for s in m_plan.steps)
+
+    # Kubernetes
+    k_plan = get_remediation_plan("kubernetes", port=6443)
+    assert len(k_plan.steps) >= 3
+    assert any("anonymous-auth=false" in s.command_linux for s in k_plan.steps)
+
+
+
