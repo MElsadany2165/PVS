@@ -566,4 +566,137 @@ def show_os_audit_results(os_info: dict, findings: list, show_remediation: bool 
             ))
 
 
+def show_compliance_report(report):
+    """Display CIS Controls v8 and NIST CSF compliance benchmark assessment."""
+    score = getattr(report, "compliance_score", 0.0)
+    rating = getattr(report, "readiness_rating", "NON_COMPLIANT")
+    rating_color = "bold green" if rating == "COMPLIANT" else "bold cyan" if rating == "SUBSTANTIALLY_COMPLIANT" else "bold yellow" if rating == "PARTIALLY_COMPLIANT" else "bold red"
+
+    summary_text = Text()
+    summary_text.append("  Target Host        : ", style="dim")
+    summary_text.append(f"{report.target}\n", style="bold white")
+    summary_text.append("  Compliance Score   : ", style="dim")
+    summary_text.append(f"{score:.1f}% ", style=rating_color)
+    summary_text.append(f"[{rating}]\n", style=rating_color)
+    summary_text.append("  Controls Evaluated : ", style="dim")
+    summary_text.append(f"{report.total_checks} total (", style="white")
+    summary_text.append(f"{report.passed_checks} passed", style="bold green")
+    summary_text.append(f", {report.failed_checks} failed)\n", style="bold red" if report.failed_checks > 0 else "dim")
+
+    console.print(Panel(
+        summary_text,
+        title="[bold cyan]CIS Controls v8 & NIST CSF Compliance Assessment[/]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1),
+    ))
+
+    table = Table(
+        title="CIS Benchmark Controls Evaluation",
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold cyan",
+        show_lines=False,
+    )
+    table.add_column("Control ID", style="bold white", width=12)
+    table.add_column("Safeguard Title", max_width=38)
+    table.add_column("NIST CSF", width=12, justify="center")
+    table.add_column("Status", width=10, justify="center")
+    table.add_column("Audit Findings & Rationale", max_width=45)
+
+    for c in report.controls_breakdown:
+        status_style = "bold green" if c.status == "PASS" else "bold red"
+        table.add_row(
+            c.control_id,
+            c.title,
+            c.nist_csf_mapping,
+            Text(c.status, style=status_style),
+            f"[dim]{c.evidence}[/]\n{c.remediation_advice}" if c.status != "PASS" else f"[dim]{c.evidence}[/]",
+        )
+
+    console.print(table)
+
+
+def show_dry_run_simulation(simulations, os_target="auto"):
+    """Display safety simulation and planned system alterations in dry-run mode."""
+    table = Table(
+        title=f"Remediation Safe Dry-Run Simulation ({os_target.upper()})",
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold cyan",
+        show_lines=True,
+    )
+    table.add_column("#", width=4, justify="center")
+    table.add_column("Component / Target", style="bold white", width=26)
+    table.add_column("Action Type", width=18, justify="center")
+    table.add_column("Safety Rating", width=16, justify="center")
+    table.add_column("Disruption", width=15, justify="center")
+    table.add_column("Proposed Execution Commands", max_width=45)
+
+    for i, sim in enumerate(simulations, 1):
+        safety = sim.get("safety_rating", "MODERATE_SAFETY")
+        safety_style = "bold green" if safety == "HIGH_SAFETY" else "bold yellow" if safety == "MODERATE_SAFETY" else "bold red"
+
+        cmds = "\n".join(sim.get("command_preview", []))
+        table.add_row(
+            str(i),
+            f"{sim.get('component')}\n[dim]{sim.get('target')}[/]",
+            sim.get("action_type", ""),
+            Text(safety.replace("_", " "), style=safety_style),
+            sim.get("disruption_level", ""),
+            f"[bright_cyan]{cmds}[/]",
+        )
+
+    console.print(table)
+    console.print("\n  [bold green]✓ DRY-RUN COMPLETE:[/] No files, registries, or services were altered on the system.\n")
+
+
+def show_threat_intel_matrix(matrix):
+    """Display EPSS scores and Real-World Exploitability Index breakdown."""
+    if not matrix or not matrix.get("profiles"):
+        return
+
+    table = Table(
+        title="Threat Intelligence & Exploitability Prioritization (EPSS + CISA KEV)",
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold cyan",
+        show_lines=False,
+    )
+    table.add_column("Vulnerability ID", style="bold white", width=22)
+    table.add_column("CVSS", width=6, justify="center")
+    table.add_column("EPSS 30d", width=12, justify="center")
+    table.add_column("CISA KEV", width=12, justify="center")
+    table.add_column("Public PoC", width=12, justify="center")
+    table.add_column("REI Score", width=10, justify="center")
+    table.add_column("Urgency Tier", width=12, justify="center")
+
+    for p in matrix.get("profiles", []):
+        epss_val = p.get("epss_score", 0.0)
+        pct_val = p.get("epss_percentile", 0.0)
+        epss_str = f"{int(epss_val*100)}% ({int(pct_val*100)}%)"
+
+        kev_str = "[bold red]YES (ACTIVE)[/]" if p.get("is_kev") else "[dim]No[/]"
+        poc_str = "[bold yellow]YES[/]" if p.get("poc_available") else "[dim]No[/]"
+
+        rei = p.get("real_world_exploitability_index", 0.0)
+        rei_style = "bold red" if rei >= 80.0 else "bold yellow" if rei >= 60.0 else "white"
+
+        tier = p.get("threat_tier", "LOW")
+        tier_style = SEVERITY_STYLES.get(tier, "dim")
+
+        table.add_row(
+            p.get("cve_id", ""),
+            str(p.get("cvss_score", 0.0)),
+            epss_str,
+            kev_str,
+            poc_str,
+            Text(f"{rei:.1f}", style=rei_style),
+            Text(tier, style=tier_style),
+        )
+
+    console.print(table)
+
+
+
 

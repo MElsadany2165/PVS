@@ -166,7 +166,9 @@ def group_vulnerabilities_by_root_cause(cve_results: dict) -> List[RootCauseFix]
                 service_name = plan.service
 
         if not service_name:
-            service_name = f"port-{port}" if port > 0 else "host-os"
+            from .services import WELL_KNOWN_SERVICES
+            service_name = WELL_KNOWN_SERVICES.get(port, f"port-{port}" if port > 0 else "host-os")
+
 
         # If first_plan is empty or generic, build from get_remediation_plan
         if not first_plan or not getattr(first_plan, "steps", None):
@@ -428,6 +430,159 @@ def generate_remediation_script(
     return filename, content
 
 
+def generate_rollback_script(
+    cve_results: dict,
+    target_ip: str = "127.0.0.1",
+    os_target: str = "auto",
+) -> Tuple[str, str]:
+    """
+    Generate an automated rollback script (.sh / .ps1) matching the remediation actions.
+    Restores original service configurations from backups, reverts firewall policies,
+    and returns services to their prior state in the event of unexpected issues.
+    """
+    if os_target == "auto":
+        os_target = "windows" if sys.platform == "win32" else "linux"
+
+    root_causes = group_vulnerabilities_by_root_cause(cve_results)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+    if os_target == "windows":
+        filename = f"pvs_rollback_{target_ip.replace('.', '_')}_{timestamp}.ps1"
+        lines = [
+            "# =====================================================================",
+            "# PVS AUTOMATED ROLLBACK SCRIPT (PowerShell)",
+            f"# Target Host: {target_ip}",
+            f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            "# =====================================================================",
+            "# IMPORTANT: Run this script inside an Administrator PowerShell window.",
+            "# =====================================================================",
+            "",
+            "$ErrorActionPreference = 'Continue'",
+            "Write-Host '[*] PVS Automated Rollback Initialized...' -ForegroundColor Yellow",
+            "",
+            "function Test-Admin {",
+            "    $currentUser = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()",
+            "    return $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+            "}",
+            "",
+            "if (-not (Test-Admin)) {",
+            "    Write-Host '[!] ERROR: Administrator privileges required for rollback.' -ForegroundColor Red",
+            "    Exit 1",
+            "}",
+            "",
+        ]
+
+        # Execute rollback steps in reverse order
+        for i, fix in enumerate(reversed(root_causes), 1):
+            lines.extend([
+                f"# --- Rollback [{i}/{len(root_causes)}] {fix.component} ---",
+                f"Write-Host '[*] Reverting changes for {fix.component}...' -ForegroundColor Cyan",
+                "try {",
+            ])
+            for r_line in fix.rollback_windows.splitlines():
+                if r_line.strip():
+                    lines.append(f"    {r_line.strip()}")
+            lines.extend([
+                f"    Write-Host '[+] Rollback completed for {fix.component}!' -ForegroundColor Green",
+                "} catch {",
+                f"    Write-Host '[!] Rollback notice for {fix.component}: $_' -ForegroundColor DarkYellow",
+                "}",
+                "",
+            ])
+
+        lines.extend([
+            "Write-Host '[✓] Rollback execution complete. System state restored!' -ForegroundColor Green",
+        ])
+        content = "\n".join(lines)
+
+    else:
+        filename = f"pvs_rollback_{target_ip.replace('.', '_')}_{timestamp}.sh"
+        lines = [
+            "#!/usr/bin/env bash",
+            "# =====================================================================",
+            "# PVS AUTOMATED ROLLBACK SCRIPT (Bash)",
+            f"# Target Host: {target_ip}",
+            f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            "# =====================================================================",
+            "set -o pipefail",
+            "",
+            "if [ \"$(id -u)\" -ne 0 ]; then",
+            "    echo '[!] ERROR: Root privileges (sudo) required for rollback.' >&2",
+            "    exit 1",
+            "fi",
+            "",
+            "echo \"[*] PVS Automated Rollback Initialized...\"",
+            "",
+        ]
+
+        for i, fix in enumerate(reversed(root_causes), 1):
+            lines.extend([
+                f"# --- Rollback [{i}/{len(root_causes)}] {fix.component} ---",
+                f"echo \"[*] Reverting changes for {fix.component}...\"",
+            ])
+            for r_line in fix.rollback_linux.splitlines():
+                if r_line.strip():
+                    lines.append(r_line.strip())
+            lines.extend([
+                f"echo \"[+] Rollback completed for {fix.component}!\"",
+                "",
+            ])
+
+        lines.extend([
+            "echo \"[✓] Rollback execution complete. System state restored!\"",
+        ])
+        content = "\n".join(lines)
+
+    return filename, content
+
+
+def simulate_dry_run(
+    cve_results: dict,
+    target_ip: str = "127.0.0.1",
+    os_target: str = "auto",
+) -> List[Dict[str, Any]]:
+    """
+    Perform a safe dry-run simulation of planned remediation procedures.
+    Predicts configuration changes, assesses disruption risk, and displays
+    the exact command pipeline without executing any changes.
+    """
+    if os_target == "auto":
+        os_target = "windows" if sys.platform == "win32" else "linux"
+
+    root_causes = group_vulnerabilities_by_root_cause(cve_results)
+    simulations: List[Dict[str, Any]] = []
+
+    for fix in root_causes:
+        # Determine safety rating
+        if fix.disruption_level == "READ_ONLY" or fix.action_type in ("AUTH_ENFORCE", "OS_POLICY_HARDEN"):
+            safety = "HIGH_SAFETY"
+        elif fix.disruption_level == "CONFIG_RELOAD":
+            safety = "MODERATE_SAFETY"
+        else:
+            safety = "REQUIRES_MAINTENANCE_WINDOW"
+
+        cmd_preview = fix.command_windows if os_target == "windows" else fix.command_linux
+        roll_preview = fix.rollback_windows if os_target == "windows" else fix.rollback_linux
+
+        simulations.append({
+            "component": fix.component,
+            "target": f"{target_ip}:{fix.port}" if fix.port > 0 else target_ip,
+            "service": fix.service,
+            "max_severity": fix.max_severity,
+            "action_type": fix.action_type,
+            "estimated_time": fix.estimated_time,
+            "disruption_level": fix.disruption_level,
+            "safety_rating": safety,
+            "risk_reduction_points": fix.risk_reduction_points,
+            "cve_count": len(fix.cve_ids),
+            "command_preview": cmd_preview.splitlines() if cmd_preview else [],
+            "rollback_preview": roll_preview.splitlines() if roll_preview else [],
+            "summary": fix.root_cause_summary,
+        })
+
+    return simulations
+
+
 async def verify_remediation_live(ip: str, port: int, service: str = "", vuln_id: str = "") -> Dict[str, Any]:
     """
     Actively re-audits a specific target port to verify if a remediation took effect.
@@ -499,4 +654,5 @@ async def verify_remediation_live(ip: str, port: int, service: str = "", vuln_id
             "evidence": matching[0].evidence,
             "verified": False,
         }
+
 

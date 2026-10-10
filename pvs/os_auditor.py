@@ -116,6 +116,26 @@ class OSFinding:
             },
         }
 
+    def to_dict(self) -> dict:
+        """Convert finding to standard dictionary representation."""
+        return {
+            "finding_id": self.finding_id,
+            "id": self.finding_id,
+            "check_id": self.finding_id,
+            "title": self.title,
+            "severity": self.severity,
+            "status": "FAIL" if self.severity in ("CRITICAL", "HIGH", "MEDIUM") else "WARNING",
+            "score": self.score,
+            "description": self.description,
+            "evidence": self.evidence,
+            "remediation_cmd": self.remediation_cmd,
+            "remediation_description": self.remediation_description,
+            "verification_cmd": self.verification_cmd,
+            "category": self.category,
+            "os_type": self.os_type,
+        }
+
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # OS Detection

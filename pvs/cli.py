@@ -80,6 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--export-script", help="Auto-generate and save ready-to-run remediation script (.sh or .ps1) for all findings")
     scan_parser.add_argument("--os-audit", action="store_true", default=None, help="Include deep local operating system security & policy audit")
     scan_parser.add_argument("--no-os-audit", dest="os_audit", action="store_false", help="Disable local operating system security audit")
+    scan_parser.add_argument("--web-audit", action="store_true", help="Include deep active Web & API security probe suite")
+    scan_parser.add_argument("--dry-run", action="store_true", help="Simulate remediation commands and preview safety risk without modifying system")
 
     # --- audit command ---
     audit_parser = subparsers.add_parser("audit", help="Run deep local operating system security & hardening audit")
@@ -97,6 +99,25 @@ def build_parser() -> argparse.ArgumentParser:
     fix_parser.add_argument("target", nargs="?", default=None, help="Target host to fix (default: latest scan target or '127.0.0.1')")
     fix_parser.add_argument("--script", "-s", help="Path to export automated remediation script (.sh / .ps1)")
     fix_parser.add_argument("--os", choices=["auto", "linux", "windows", "macos"], default="auto", help="Target operating system for generated scripts")
+    fix_parser.add_argument("--dry-run", action="store_true", help="Simulate remediation commands and preview safety risk without modifying system")
+    fix_parser.add_argument("--rollback", action="store_true", help="Generate automated rollback script (.rollback.sh / .rollback.ps1)")
+
+    # --- compliance command ---
+    comp_parser = subparsers.add_parser("compliance", help="Evaluate target against CIS Controls v8 & NIST CSF benchmarks")
+    comp_parser.add_argument("target", nargs="?", default="me", help="Target host (default: local computer 'me')")
+    comp_parser.add_argument("-o", "--output", help="Output report file path")
+    comp_parser.add_argument("-f", "--format", default="terminal", choices=["terminal", "json", "html"], help="Output format (default: terminal)")
+
+    # --- serve / ui command ---
+    serve_parser = subparsers.add_parser("serve", help="Launch interactive live Web Dashboard & Topology Visualizer")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="HTTP server bind host (default: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=8484, help="HTTP server bind port (default: 8484)")
+    serve_parser.add_argument("--no-browser", action="store_true", help="Do not automatically open web browser")
+
+    ui_parser = subparsers.add_parser("ui", help="Launch interactive live Web Dashboard & Topology Visualizer (alias of serve)")
+    ui_parser.add_argument("--host", default="127.0.0.1", help="HTTP server bind host (default: 127.0.0.1)")
+    ui_parser.add_argument("--port", type=int, default=8484, help="HTTP server bind port (default: 8484)")
+    ui_parser.add_argument("--no-browser", action="store_true", help="Do not automatically open web browser")
 
     # --- verify command ---
     verify_parser = subparsers.add_parser("verify", help="Live re-test a port to verify if a remediation eliminated the threat")
@@ -113,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("shortcut", help="Create a Desktop shortcut for 1-click launching PVS")
 
     return parser
+
 
 
 async def run_scan(args):
@@ -638,8 +660,101 @@ def run_verify(args):
         console.print(f"\n  [bold bright_green]✅ SUCCESS: {result.get('message')}[/bold bright_green]\n")
     else:
         console.print(f"\n  [bold bright_red]❌ NOT RESOLVED: {result.get('message')}[/bold bright_red]")
+
         if result.get("evidence"):
             console.print(f"  [dim]Evidence: {result.get('evidence')}[/dim]\n")
+    return 0
+
+
+def run_fix(args):
+    """Interactive or automated threat resolver, root-cause solver, rollback & script generator."""
+    from pvs.remediation_engine import generate_remediation_script, generate_rollback_script, simulate_dry_run
+    from pvs.display import show_dry_run_simulation
+
+    target_ip = args.target or "127.0.0.1"
+    os_target = getattr(args, "os", "auto")
+
+    # Collect vulnerabilities from local cache or run OS audit
+    from pvs.vuln_engine import LocalVulnCache
+    cache = LocalVulnCache()
+    cached_vulns = cache.get_all_recent_cves(limit=50)
+
+    cve_results = {}
+    if cached_vulns:
+        cve_results[f"{target_ip}:cached"] = cached_vulns
+    else:
+        from pvs.os_auditor import audit_local_os
+        _, findings = audit_local_os()
+        if findings:
+            cve_results[f"{target_ip}:host"] = [f.to_enhanced_cve_dict() for f in findings]
+
+    if not cve_results:
+        show_info("No active vulnerabilities or findings found to fix.")
+        return 0
+
+    if getattr(args, "dry_run", False):
+        sims = simulate_dry_run(cve_results, target_ip=target_ip, os_target=os_target)
+        show_dry_run_simulation(sims, os_target=os_target)
+        return 0
+
+    if getattr(args, "rollback", False):
+        fn, script = generate_rollback_script(cve_results, target_ip=target_ip, os_target=os_target)
+        export_path = getattr(args, "script", None) or fn
+        with open(export_path, "w", encoding="utf-8") as f:
+            f.write(script)
+        show_info(f"Automated rollback script exported: {export_path}")
+        return 0
+
+    fn, script = generate_remediation_script(cve_results, target_ip=target_ip, os_target=os_target)
+    export_path = getattr(args, "script", None) or fn
+    with open(export_path, "w", encoding="utf-8") as f:
+        f.write(script)
+    show_info(f"Automated remediation script exported: {export_path}")
+    console.print(f"  [dim]Execute inside an elevated prompt: [/dim][bold cyan]{export_path}[/bold cyan]")
+    return 0
+
+
+def run_compliance(args):
+    """Evaluate target security posture against CIS Controls v8 and NIST CSF benchmarks."""
+    from pvs.compliance import evaluate_cis_benchmarks
+    from pvs.display import show_compliance_report
+
+    target = args.target or "me"
+    show_info(f"Evaluating CIS Controls v8 & NIST CSF benchmarks for: {target}...")
+
+    # Run local OS audit to get baseline findings
+    from pvs.os_auditor import audit_local_os
+    os_info, findings = audit_local_os()
+    os_dict_list = [f.to_dict() for f in findings]
+
+    report = evaluate_cis_benchmarks(
+        target=target,
+        os_audit_results=os_dict_list,
+    )
+
+    fmt = getattr(args, "format", "terminal")
+    if fmt == "json":
+        import json
+        out = json.dumps(report.to_dict(), indent=2)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(out)
+            show_info(f"Compliance report exported: {args.output}")
+        else:
+            print(out)
+    else:
+        show_compliance_report(report)
+
+    return 0
+
+
+def run_serve(args):
+    """Launch the interactive live Web GUI server."""
+    from pvs.web_ui import run_web_ui_server
+    host = getattr(args, "host", "127.0.0.1")
+    port = getattr(args, "port", 8484)
+    open_browser = not getattr(args, "no_browser", False)
+    run_web_ui_server(host=host, port=port, open_browser=open_browser)
     return 0
 
 
@@ -684,6 +799,10 @@ def main():
             return 130
     elif args.command == "fix":
         return run_fix(args)
+    elif args.command == "compliance":
+        return run_compliance(args)
+    elif args.command in ("serve", "ui"):
+        return run_serve(args)
     elif args.command == "verify":
         return run_verify(args)
     elif args.command == "info":
@@ -693,8 +812,7 @@ def main():
 
     return 0
 
-
-
 if __name__ == "__main__":
     sys.exit(main() or 0)
+
 

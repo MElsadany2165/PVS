@@ -258,6 +258,24 @@ class LocalVulnCache:
         except Exception as e:
             logger.warning(f"Cache write error for key {cache_key}: {e}")
 
+    def get_all_recent_cves(self, limit: int = 50) -> List[EnhancedCVEEntry]:
+        """Retrieve recent vulnerabilities from the persistent SQLite cache."""
+        results = []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT cve_json FROM cve_cache ORDER BY timestamp DESC LIMIT ?",
+                    (limit,)
+                )
+                for (cve_json,) in cursor.fetchall():
+                    raw_list = json.loads(cve_json)
+                    results.extend([EnhancedCVEEntry.from_dict(item) for item in raw_list])
+        except Exception as e:
+            logger.debug(f"Cache recent read error: {e}")
+        return results
+
+
     def get_kev(self, cve_id: str) -> Optional[dict]:
         """Fetch KEV entry details for a given CVE ID."""
         try:

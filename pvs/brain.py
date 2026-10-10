@@ -18,7 +18,7 @@ Capabilities:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Dict, Optional, Set, Tuple, Any
 import re
 import math
 
@@ -94,7 +94,9 @@ class NetworkPosture:
     insights: List[NetworkInsight] = field(default_factory=list)
     root_cause_actions: List[dict] = field(default_factory=list)
     attack_chains: List[dict] = field(default_factory=list)
-    roi_quick_wins: List[dict] = field(default_factory=list)
+    threat_matrix: Dict[str, Any] = field(default_factory=dict)
+    compliance_score: float = 100.0
+    compliance_rating: str = "COMPLIANT"
     executive_summary: str = ""
     scan_mode: str = "online"
 
@@ -116,9 +118,13 @@ class NetworkPosture:
             "root_cause_actions": self.root_cause_actions,
             "attack_chains": self.attack_chains,
             "roi_quick_wins": self.roi_quick_wins,
+            "threat_matrix": self.threat_matrix,
+            "compliance_score": self.compliance_score,
+            "compliance_rating": self.compliance_rating,
             "executive_summary": self.executive_summary,
             "scan_mode": self.scan_mode,
         }
+
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -823,8 +829,66 @@ def analyze_scan_results(
     except Exception as e:
         logger.debug(f"Root cause aggregation error: {e}")
 
+    # ── Threat Intelligence & EPSS Matrix ────────────────────────────────
+    try:
+        from .threat_intel import generate_threat_matrix
+        flat_findings = []
+        for cve_list in cve_results.values():
+            for c in cve_list:
+                flat_findings.append(c.to_dict() if hasattr(c, "to_dict") else c)
+        posture.threat_matrix = generate_threat_matrix(flat_findings)
+        if posture.threat_matrix.get("critical_urgency", 0) > 0:
+            posture.insights.append(NetworkInsight(
+                category="critical_action",
+                title=f"Imminent Threat: {posture.threat_matrix['critical_urgency']} Weaponized Vulnerabilities",
+                description=(
+                    f"EPSS & threat intelligence telemetry identifies {posture.threat_matrix['critical_urgency']} "
+                    f"vulnerability/ies with extreme weaponization probabilities (>80% Real-World Exploitability Index). "
+                    f"Attackers are actively targeting these specific CVEs in wild campaigns."
+                ),
+                priority=99,
+                icon="🚨",
+            ))
+    except Exception as e:
+        logger.debug(f"Threat matrix error: {e}")
+
+    # ── CIS Controls v8 Compliance Baseline ──────────────────────────────
+    try:
+        from .compliance import evaluate_cis_benchmarks
+        hosts_for_comp = [
+            {
+                "ip": hr.ip,
+                "ports": [
+                    {"port": pr.port, "state": pr.state, "cves": cve_results.get(f"{hr.ip}:{pr.port}", [])}
+                    for pr in hr.ports
+                ]
+            }
+            for hr in host_results
+        ]
+        flat_vulns = []
+        for cve_list in cve_results.values():
+            for c in cve_list:
+                flat_vulns.append(c.to_dict() if hasattr(c, "to_dict") else c)
+        comp_rep = evaluate_cis_benchmarks(target="network", scan_hosts=hosts_for_comp, active_vulns=flat_vulns)
+        posture.compliance_score = comp_rep.compliance_score
+        posture.compliance_rating = comp_rep.readiness_rating
+        if comp_rep.compliance_score < 80.0:
+            posture.insights.append(NetworkInsight(
+                category="warning",
+                title=f"CIS Controls Compliance Gap: {comp_rep.compliance_score}% ({comp_rep.readiness_rating})",
+                description=(
+                    f"Network fails {comp_rep.failed_checks} of {comp_rep.total_checks} evaluated CIS Controls v8 "
+                    f"safeguards. Key remediation required for {', '.join(list(comp_rep.control_group_scores.keys())[:2])}."
+                ),
+                priority=88,
+                icon="📋",
+            ))
+    except Exception as e:
+        logger.debug(f"Compliance evaluation error: {e}")
+
     # Sort insights by priority descending
     posture.insights.sort(key=lambda x: x.priority, reverse=True)
+
 
     # ── Risk Score ───────────────────────────────────────────────────────
     posture.risk_score, posture.risk_level, posture.risk_color = _calculate_network_risk_score(

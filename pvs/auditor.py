@@ -1098,6 +1098,16 @@ async def audit_host_port(
     if port in (80, 443, 8080, 8443, 8000, 8888, 9090, 3000, 5000) or svc_lower in ("http", "https"):
         web_vulns = await audit_web_vulnerabilities(ip, port, use_ssl=use_ssl, timeout=timeout)
         findings.extend(web_vulns)
+        try:
+            from .web_auditor import audit_web_service_full
+            deep_web_vulns = await audit_web_service_full(ip, port, use_ssl=use_ssl, timeout=timeout)
+            existing_ids = {v.vuln_id for v in findings}
+            for dwv in deep_web_vulns:
+                if dwv.vuln_id not in existing_ids:
+                    findings.append(dwv)
+        except Exception as e:
+            logger.debug(f"Deep web auditor probe error: {e}")
+
         
     # 6. TLS session security audit
     if tls_info:

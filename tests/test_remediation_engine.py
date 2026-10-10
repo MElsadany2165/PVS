@@ -168,3 +168,52 @@ async def test_verify_remediation_live_cve_closed_port():
     assert res["verified"] is True
     assert "closed or rejected" in res["message"]
 
+
+def test_generate_rollback_script():
+    """Test generating rollback scripts for Windows and Linux."""
+    from pvs.remediation_engine import generate_rollback_script
+    cve_results = {
+        "127.0.0.1:22": [
+            {
+                "cve_id": "CVE-2024-6387",
+                "severity": "CRITICAL",
+                "score": 8.1,
+                "description": "OpenSSH regreSSHion unauthenticated RCE",
+            }
+        ]
+    }
+    # Test Linux rollback
+    fn_lin, script_lin = generate_rollback_script(cve_results, target_ip="127.0.0.1", os_target="linux")
+    assert fn_lin.endswith(".sh")
+    assert "ROLLBACK SCRIPT" in script_lin
+    assert "Root privileges" in script_lin
+
+    # Test Windows rollback
+    fn_win, script_win = generate_rollback_script(cve_results, target_ip="127.0.0.1", os_target="windows")
+    assert fn_win.endswith(".ps1")
+    assert "ROLLBACK SCRIPT" in script_win
+    assert "Test-Admin" in script_win
+
+
+def test_simulate_dry_run():
+    """Test simulation dry-run output and safety ratings without modifying system."""
+    from pvs.remediation_engine import simulate_dry_run
+    cve_results = {
+        "127.0.0.1:6379": [
+            {
+                "cve_id": "VULN-UNAUTH-REDIS",
+                "severity": "CRITICAL",
+                "score": 10.0,
+                "description": "Redis unauthenticated access",
+            }
+        ]
+    }
+    sims = simulate_dry_run(cve_results, target_ip="127.0.0.1", os_target="linux")
+    assert len(sims) == 1
+    sim = sims[0]
+    assert "Redis" in sim["component"] or "REDIS" in sim["component"]
+    assert sim["max_severity"] == "CRITICAL"
+    assert "safety_rating" in sim
+    assert len(sim["command_preview"]) > 0
+
+

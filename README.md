@@ -13,7 +13,7 @@
   <a href="#-installation-guide-all-operating-systems"><img src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
   <a href="https://github.com/MElsadany2165/PVS/releases"><img src="https://img.shields.io/badge/version-2.0.0-cyan" alt="Version 2.0.0"></a>
-  <a href="#-development--automated-testing"><img src="https://img.shields.io/badge/tests-100%20passed-brightgreen" alt="100 Tests Passing"></a>
+  <a href="#-development--automated-testing"><img src="https://img.shields.io/badge/tests-116%20passed-brightgreen" alt="116 Tests Passing"></a>
   <a href="#-installation-guide-all-operating-systems"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Docker-purple" alt="Supported Platforms"></a>
   <a href="#%EF%B8%8F-legal-disclaimer"><img src="https://img.shields.io/badge/use-authorized%20only-red" alt="Authorized Use Only"></a>
 </p>
@@ -374,10 +374,12 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 | Command | Usage | Description |
 |:---|:---|:---|
 | `pvs` | `pvs` or `pvs wizard` | Launches interactive 4-persona guided assistant |
+| `pvs serve` / `pvs ui` | `pvs serve [--port 8484]` | Launches interactive live Web Dashboard & SVG/Canvas Network Topology Visualizer |
+| `pvs compliance` | `pvs compliance [target]` | Evaluates target security posture against CIS Controls v8 and NIST CSF benchmarks |
 | `pvs quick` | `pvs quick [target]` | Zero-config 1-command home network scan with auto-open HTML report |
-| `pvs audit` | `pvs audit [target] [options]` | Deep local operating system policy, patch, and hardening auditor (Windows Defender, Firewall, Updates, BitLocker, etc.) |
+| `pvs audit` | `pvs audit [target] [options]` | Deep local operating system policy, patch, and hardening auditor (Defender, Firewall, BitLocker, etc.) |
 | `pvs scan` | `pvs scan <target> [options]` | Direct CLI port scanner, service fingerprinter, and threat auditor |
-| `pvs fix` | `pvs fix [target] [--script <path>]` | Interactive threat resolver, root-cause solver & automated script generator (.sh / .ps1) |
+| `pvs fix` | `pvs fix [target] [options]` | Interactive threat resolver, root-cause solver, `--dry-run` simulation & `--rollback` script generator |
 | `pvs verify` | `pvs verify <target> <port>` | Live re-test a port to verify if a remediation successfully eliminated the threat |
 | `pvs info` | `pvs info <port\|service>` | Looks up well-known port numbers and service names |
 | `pvs shortcut` | `pvs shortcut` | Creates a Desktop launcher shortcut for Windows |
@@ -394,6 +396,8 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 | `--no-cve` | | Disable CVE and threat lookups (port scan only) | `off` |
 | `--fix` | `--remediation` | Display single service remediation procedure summary in CLI output | `enabled` |
 | `--no-fix` | | Hide step-by-step fix procedures in CLI output | `off` |
+| `--web-audit` | | Include deep active Web & API security probe suite (headers, CORS, leaks, verbs) | `off` |
+| `--dry-run` | | Simulate remediation execution and preview safety risk without modifying system | `off` |
 | `--export-script` | | Auto-generate and save ready-to-run remediation script (`.sh` or `.ps1`) | `off` |
 | `--open` | | Auto-open generated HTML report in browser upon completion | `off` |
 | `--timeout` | `-t` | Connection response timeout in seconds (calibrated dynamically by RTT) | `2.0` |
@@ -409,6 +413,7 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 | `--no-banner-grab` | | Skip service version & banner detection | `off` |
 | `--yes` | `-y` | Skip confirmation prompt on large (>10,000 probe) scans | `off` |
 | `-q, --quiet` | `-q` | Suppress CLI banner and header output | `off` |
+
 
 
 ---
