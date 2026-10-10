@@ -462,6 +462,37 @@ def _analyze_vuln_patterns(cve_results: dict) -> List[NetworkInsight]:
             icon="🔥",
         ))
 
+    # Detect Host OS audit misconfigurations
+    os_findings = [
+        c for cves in cve_results.values() for c in cves
+        if str(getattr(c, "cve_id", None) or (c.get("cve_id") if isinstance(c, dict) else "")).startswith("OS-")
+    ]
+    if os_findings:
+        crit_os = [c for c in os_findings if (getattr(c, "severity", None) or (c.get("severity") if isinstance(c, dict) else "")).upper() == "CRITICAL"]
+        if crit_os:
+            insights.append(NetworkInsight(
+                category="critical_action",
+                title=f"Host Security Risk: {len(crit_os)} Critical OS Misconfiguration(s)",
+                description=(
+                    f"Local operating system audit discovered {len(crit_os)} critical security "
+                    f"misconfiguration(s) (e.g. Defender disabled, Firewall off, or missing patches). "
+                    f"These expose the host directly even when network ports are filtered."
+                ),
+                priority=99,
+                icon="🛡️",
+            ))
+        else:
+            insights.append(NetworkInsight(
+                category="warning",
+                title=f"Host OS Hardening: {len(os_findings)} Security Improvement(s)",
+                description=(
+                    f"Local OS audit identified {len(os_findings)} configuration policy finding(s). "
+                    f"Applying the generated remediation commands will significantly raise the host defense baseline."
+                ),
+                priority=75,
+                icon="🔒",
+            ))
+
     # Detect Container / Host Breakout risk
     has_docker = any("2375" in k or "docker" in str(v).lower() for k, v in cve_results.items())
     if has_docker:
@@ -653,7 +684,11 @@ def _detect_attack_chains(host_results, cve_results: dict) -> List[dict]:
                     cid = c.cve_id if hasattr(c, "cve_id") else c.get("cve_id", "")
                     sev = (c.severity if hasattr(c, "severity") else c.get("severity", "")).upper()
                     if sev in ("CRITICAL", "HIGH"):
-                        port_num = int(target_key.split(":")[1]) if ":" in target_key else 0
+                        raw_port = target_key.split(":")[1] if ":" in target_key else "0"
+                        try:
+                            port_num = int(raw_port)
+                        except ValueError:
+                            port_num = 0
                         entry_points.append((port_num, f"High Risk Service ({cid})"))
 
         if entry_points and pivots:

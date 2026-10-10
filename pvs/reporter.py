@@ -720,7 +720,7 @@ window.addEventListener('DOMContentLoaded', () => {{
             {epss_badge}
             {kev_badge}
         </div>
-        <span style="color:var(--muted); font-size: 0.8rem;">Port {port['port']}/{h(port.get('service',''))} {published_html}</span>
+        <span style="color:var(--muted); font-size: 0.8rem;">{"Host Security / " + h(port.get("service","")) if port.get("port", 0) == 0 else f"Port {port['port']}/" + h(port.get("service",""))} {published_html}</span>
     </div>
     <p style="font-size: 0.9rem; color: var(--text);">{h(cve.get('description', ''))}</p>
     {f'<p style="font-size: 0.85rem; color: var(--kev); margin-top: 0.4rem;"><strong>CISA KEV Required Action:</strong> {kev_action}</p>' if kev_action else ''}
@@ -779,6 +779,27 @@ def build_scan_data(target, host_results, cve_results=None, scan_mode: str = "on
             else:
                 port_entry["cves"] = []
             ports_data.append(port_entry)
+
+        # Attach Host OS security findings if present for this host
+        os_cves = []
+        for key, findings_list in (cve_results or {}).items():
+            if key.startswith(f"{hr.ip}:") and not key.split(":")[1].isdigit():
+                for c in findings_list:
+                    if hasattr(c, "to_dict"):
+                        os_cves.append(c.to_dict())
+                    elif isinstance(c, dict):
+                        os_cves.append(c)
+        if os_cves:
+            ports_data.append({
+                "port": 0,
+                "state": "audited",
+                "service": "Host OS Security",
+                "version": getattr(hr, "os_guess", "") or "Local System",
+                "banner": "Local Operating System Policy & Security Audit",
+                "tls_info": {},
+                "cves": os_cves,
+            })
+
         hosts_data.append({
             "ip": hr.ip, "hostname": hr.hostname,
             "is_up": hr.is_up, "scan_time": hr.scan_time,
@@ -786,6 +807,37 @@ def build_scan_data(target, host_results, cve_results=None, scan_mode: str = "on
             "latency_ms": getattr(hr, "latency_ms", 0.0),
             "ports": ports_data,
         })
+
+    if not hosts_data and cve_results:
+        # Construct synthetic host entry for standalone OS audits
+        hosts_seen = {}
+        for key, findings_list in cve_results.items():
+            hip = key.split(":")[0] if ":" in key else target
+            if hip not in hosts_seen:
+                hosts_seen[hip] = []
+            for c in findings_list:
+                if hasattr(c, "to_dict"):
+                    hosts_seen[hip].append(c.to_dict())
+                elif isinstance(c, dict):
+                    hosts_seen[hip].append(c)
+        for hip, clist in hosts_seen.items():
+            hosts_data.append({
+                "ip": hip,
+                "hostname": "localhost" if hip in ("127.0.0.1", "::1", "localhost") else "",
+                "is_up": True,
+                "scan_time": 0.0,
+                "os_guess": "Local OS",
+                "latency_ms": 0.0,
+                "ports": [{
+                    "port": 0,
+                    "state": "audited",
+                    "service": "Host OS Security",
+                    "version": "Local Policy Audit",
+                    "banner": "Local Operating System Policy & Security Audit",
+                    "tls_info": {},
+                    "cves": clist,
+                }],
+            })
     result = {
         "scanner": "PVS", "version": __version__,
         "scan_time": datetime.now().isoformat(),

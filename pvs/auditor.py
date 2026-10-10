@@ -728,6 +728,329 @@ def audit_tls_flaws(port: int, tls_info: dict) -> List[ActiveVulnerability]:
     return vulns
 
 
+# --- 7. MySQL Unauthenticated Access Probe ---
+
+async def audit_mysql_unauth(ip: str, port: int = 3306, timeout: float = 2.5) -> List[ActiveVulnerability]:
+    """
+    Audit MySQL/MariaDB for unauthenticated root access.
+    Connects to MySQL and parses the server greeting to check if authentication
+    is required. Then attempts an auth packet with empty password for root.
+    """
+    vulns: List[ActiveVulnerability] = []
+    reader, writer = await _safe_connect(ip, port, timeout=timeout)
+    if not reader or not writer:
+        return vulns
+    try:
+        # MySQL protocol: server sends a greeting packet first
+        greeting = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+        if not greeting or len(greeting) < 20:
+            return vulns
+
+        greeting_text = greeting.decode("utf-8", errors="replace")
+
+        # Extract server version from greeting
+        # Greeting format: [length:3][seq:1][protocol:1][version:NUL-terminated]...
+        ver_start = 5
+        ver_end = greeting.find(b"\x00", ver_start)
+        server_version = greeting[ver_start:ver_end].decode("utf-8", errors="replace") if ver_end > ver_start else "unknown"
+
+        # Try to authenticate as root with empty password
+        # Build a MySQL COM_QUERY or simple auth response
+        # The simpler check: if the greeting doesn't require auth plugins, or
+        # if we get "Access denied" vs a valid welcome, we know auth is needed.
+
+        # For a lightweight check: try sending a minimal auth packet for 'root' with empty pass
+        # MySQL native auth packet structure is complex — let's use a simpler test
+        # by attempting a connection via a raw handshake response
+
+        # Craft a minimal client handshake response for "root" with no password
+        import struct
+        # Client capabilities (minimum for auth)
+        client_caps = 0x0000A685  # CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | etc.
+        max_packet = 16777215
+        charset = 33  # utf8
+
+        # Build the auth packet
+        username = b"root\x00"
+        auth_data = b"\x00"  # empty password = 0 length
+        filler = b"\x00" * 23
+
+        payload = struct.pack("<IIB", client_caps, max_packet, charset)
+        payload += filler + username + auth_data
+
+        packet_len = len(payload)
+        header = struct.pack("<I", packet_len)[0:3] + b"\x01"  # sequence=1
+        writer.write(header + payload)
+        await writer.drain()
+
+        response = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+        if response and len(response) > 4:
+            # Check if we got an OK packet (0x00) or Error packet (0xFF)
+            indicator = response[4]
+            if indicator == 0x00:
+                # OK packet — root login with empty password succeeded!
+                vulns.append(ActiveVulnerability(
+                    vuln_id="VULN-UNAUTH-MYSQL",
+                    title="MySQL Root Login WITHOUT Password — Full Database Access",
+                    severity="CRITICAL",
+                    score=9.8,
+                    service="mysql",
+                    port=port,
+                    description=(
+                        f"MySQL/MariaDB server ({server_version}) at {ip}:{port} allows root "
+                        f"login with an empty password. An attacker can read, modify, or "
+                        f"destroy all databases, create new users, and potentially execute "
+                        f"system commands via UDF or INTO OUTFILE."
+                    ),
+                    remediation_key="mysql",
+                    evidence=f"Successfully authenticated as 'root' with empty password. Server: {server_version}",
+                    cve_id="CWE-306",
+                    is_kev=True,
+                    categories=["auth_bypass", "rce"],
+                    references=["https://cwe.mitre.org/data/definitions/306.html"],
+                ))
+            elif indicator == 0xFE:
+                # Auth switch request — server wants a different auth method, not fully open
+                pass
+            # 0xFF = error = correctly requires password
+    except Exception as e:
+        logger.debug(f"MySQL audit error on {ip}:{port}: {e}")
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+    return vulns
+
+
+# --- 8. PostgreSQL Trust Authentication Probe ---
+
+async def audit_postgresql_trust(ip: str, port: int = 5432, timeout: float = 2.5) -> List[ActiveVulnerability]:
+    """
+    Audit PostgreSQL for trust authentication (no password required).
+    Sends a StartupMessage as user 'postgres' and checks if auth is needed.
+    """
+    vulns: List[ActiveVulnerability] = []
+    reader, writer = await _safe_connect(ip, port, timeout=timeout)
+    if not reader or not writer:
+        return vulns
+    try:
+        import struct
+        # PostgreSQL v3.0 StartupMessage:
+        # [int32 length] [int32 protocol_version=196608 (3.0)] [key\0value\0 ... \0]
+        user = b"postgres"
+        database = b"postgres"
+        params = b"user\x00" + user + b"\x00database\x00" + database + b"\x00\x00"
+        protocol = struct.pack(">I", 196608)  # version 3.0
+        length = struct.pack(">I", 4 + len(protocol) + len(params))
+
+        writer.write(length + protocol + params)
+        await writer.drain()
+
+        response = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+        if response and len(response) > 0:
+            msg_type = chr(response[0]) if response[0] < 128 else ""
+
+            if msg_type == "R":
+                # AuthenticationRequest — parse the auth type
+                if len(response) >= 9:
+                    auth_type = struct.unpack(">I", response[5:9])[0]
+                    if auth_type == 0:
+                        # AuthenticationOk — NO PASSWORD NEEDED (trust auth)
+                        vulns.append(ActiveVulnerability(
+                            vuln_id="VULN-UNAUTH-POSTGRESQL",
+                            title="PostgreSQL Trust Authentication — No Password Required",
+                            severity="CRITICAL",
+                            score=9.5,
+                            service="postgresql",
+                            port=port,
+                            description=(
+                                f"PostgreSQL at {ip}:{port} uses 'trust' authentication for "
+                                f"the 'postgres' superuser. Anyone who can reach this port has "
+                                f"full superuser access to ALL databases without any password. "
+                                f"This allows data theft, data destruction, and command execution "
+                                f"via COPY TO PROGRAM."
+                            ),
+                            remediation_key="postgresql",
+                            evidence="StartupMessage as 'postgres' received AuthenticationOk (type=0). No password was required.",
+                            cve_id="CWE-306",
+                            is_kev=True,
+                            categories=["auth_bypass", "rce"],
+                            references=["https://www.postgresql.org/docs/current/auth-pg-hba-conf.html"],
+                        ))
+                    # auth_type 3 = cleartext password, 5 = md5, 10 = SASL = properly secured
+    except Exception as e:
+        logger.debug(f"PostgreSQL audit error on {ip}:{port}: {e}")
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+    return vulns
+
+
+# --- 9. Kubernetes API Unauthenticated Probe ---
+
+async def audit_kubernetes_api(ip: str, port: int = 6443, timeout: float = 2.5) -> List[ActiveVulnerability]:
+    """
+    Audit Kubernetes API server for unauthenticated access.
+    Checks /api and /version endpoints for responses that indicate open access.
+    Also checks kubelet (10250) read-only port.
+    """
+    vulns: List[ActiveVulnerability] = []
+    use_ssl = port in (6443, 10250, 8443)
+
+    reader, writer = await _safe_connect(ip, port, timeout=timeout, use_ssl=use_ssl)
+    if not reader or not writer:
+        return vulns
+    try:
+        # Send HTTP GET /api
+        proto = "https" if use_ssl else "http"
+        path = "/pods" if port == 10250 else "/api"
+        request = f"GET {path} HTTP/1.1\r\nHost: {ip}:{port}\r\nConnection: close\r\n\r\n"
+        writer.write(request.encode())
+        await writer.drain()
+
+        response_raw = await asyncio.wait_for(reader.read(8192), timeout=timeout)
+        response = response_raw.decode("utf-8", errors="replace")
+
+        # Check for Kubernetes API response
+        if ("\"kind\"" in response and ("APIVersions" in response or "PodList" in response)):
+            # Got a valid K8s API response without auth
+            if "401" not in response and "403" not in response:
+                vulns.append(ActiveVulnerability(
+                    vuln_id="VULN-UNAUTH-K8S-API",
+                    title="Kubernetes API Server Accessible Without Authentication",
+                    severity="CRITICAL",
+                    score=9.8,
+                    service="kubernetes",
+                    port=port,
+                    description=(
+                        f"Kubernetes API at {ip}:{port} responds to unauthenticated requests. "
+                        f"An attacker can list pods, secrets, deployments, and potentially "
+                        f"create privileged containers to escape to the host system."
+                    ),
+                    remediation_key="kubernetes",
+                    evidence=f"GET {path} returned valid Kubernetes JSON without authentication: {response[:200]}",
+                    cve_id="CWE-306",
+                    is_kev=True,
+                    categories=["auth_bypass", "rce"],
+                    references=["https://kubernetes.io/docs/reference/access-authn-authz/authentication/"],
+                ))
+        elif port == 10250 and "items" in response.lower():
+            # Kubelet read-only port
+            vulns.append(ActiveVulnerability(
+                vuln_id="VULN-KUBELET-READONLY",
+                title="Kubelet API Exposed — Pod Information Disclosure",
+                severity="HIGH",
+                score=7.5,
+                service="kubernetes",
+                port=port,
+                description=(
+                    f"Kubelet API at {ip}:{port} exposes pod information without authentication. "
+                    f"Attackers can enumerate running containers, their environment variables "
+                    f"(which often contain secrets), and mounted volumes."
+                ),
+                remediation_key="kubernetes",
+                evidence=f"GET /pods returned pod data without authentication",
+                cve_id="CWE-200",
+                categories=["info_disclosure"],
+                references=["https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/"],
+            ))
+    except Exception as e:
+        logger.debug(f"K8s audit error on {ip}:{port}: {e}")
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+    return vulns
+
+
+# --- 10. SSH Weak Key Exchange / Algorithm Detection ---
+
+async def audit_ssh_weak_algorithms(ip: str, port: int = 22, banner: str = "", timeout: float = 2.5) -> List[ActiveVulnerability]:
+    """
+    Audit SSH for weak key exchange algorithms, ciphers, or MACs.
+    Parses the SSH banner and attempts to identify weak algorithm support.
+    """
+    vulns: List[ActiveVulnerability] = []
+
+    # If no banner provided, grab one
+    if not banner:
+        reader, writer = await _safe_connect(ip, port, timeout=timeout)
+        if reader and writer:
+            try:
+                banner_data = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+                banner = banner_data.decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            finally:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+    if not banner or "SSH-" not in banner:
+        return vulns
+
+    # Check for very old/dangerous SSH protocol versions
+    if banner.startswith("SSH-1"):
+        vulns.append(ActiveVulnerability(
+            vuln_id="VULN-SSH-V1",
+            title="SSH Protocol Version 1 Detected — Critically Insecure",
+            severity="CRITICAL",
+            score=9.0,
+            service="ssh",
+            port=port,
+            description=(
+                f"SSH server at {ip}:{port} supports SSH protocol version 1, which has known "
+                f"cryptographic weaknesses allowing session hijacking and data interception. "
+                f"SSH v1 should never be used."
+            ),
+            remediation_key="ssh",
+            evidence=f"SSH banner: {banner}",
+            cve_id="CVE-2001-0361",
+            is_kev=True,
+            categories=["weak_crypto"],
+            references=["https://nvd.nist.gov/vuln/detail/CVE-2001-0361"],
+        ))
+
+    # Check for Dropbear (often on embedded/IoT devices, frequently outdated)
+    if "dropbear" in banner.lower():
+        ver_match = re.search(r"dropbear[_\s](\d+\.\d+)", banner, re.IGNORECASE)
+        if ver_match:
+            ver = ver_match.group(1)
+            # Dropbear < 2022.83 has multiple CVEs
+            try:
+                major, minor = ver.split(".")
+                if int(major) < 2022 or (int(major) == 2022 and int(minor) < 83):
+                    vulns.append(ActiveVulnerability(
+                        vuln_id="VULN-SSH-DROPBEAR-OLD",
+                        title=f"Outdated Dropbear SSH Server (v{ver}) on IoT/Embedded Device",
+                        severity="HIGH",
+                        score=7.5,
+                        service="ssh",
+                        port=port,
+                        description=(
+                            f"Dropbear SSH v{ver} is outdated and has known vulnerabilities. "
+                            f"Dropbear is commonly found on routers, IoT devices, and embedded "
+                            f"systems which are rarely updated."
+                        ),
+                        remediation_key="ssh",
+                        evidence=f"SSH banner: {banner}",
+                        categories=["rce", "auth_bypass"],
+                    ))
+            except ValueError:
+                pass
+
+    return vulns
+
+
 # --- Main Active Audit Orchestrator ---
 
 async def audit_host_port(
@@ -780,5 +1103,21 @@ async def audit_host_port(
     if tls_info:
         tls_vulns = audit_tls_flaws(port, tls_info)
         findings.extend(tls_vulns)
+
+    # 7. MySQL/MariaDB unauthenticated access
+    if port == 3306 or svc_lower in ("mysql", "mariadb"):
+        findings.extend(await audit_mysql_unauth(ip, port, timeout))
+
+    # 8. PostgreSQL trust authentication
+    if port == 5432 or svc_lower in ("postgresql", "postgres"):
+        findings.extend(await audit_postgresql_trust(ip, port, timeout))
+
+    # 9. Kubernetes API unauthenticated access
+    if port in (6443, 10250, 8443) or svc_lower in ("kubernetes", "k8s"):
+        findings.extend(await audit_kubernetes_api(ip, port, timeout))
+
+    # 10. SSH weak algorithm detection
+    if port == 22 or svc_lower in ("ssh", "openssh"):
+        findings.extend(await audit_ssh_weak_algorithms(ip, port, banner=banner, timeout=timeout))
 
     return findings

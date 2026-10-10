@@ -198,7 +198,9 @@ def show_cve_results(cve_results: dict, show_remediation: bool = False):
             sev_style = SEVERITY_STYLES.get(severity, "dim")
             score_style = "bold red" if score >= 7.0 else "bold yellow" if score >= 4.0 else "green"
 
-            if str(cve_id).startswith("VULN-"):
+            if str(cve_id).startswith("OS-"):
+                status_text = Text(f"🛡️ HOST OS AUDIT ({p_score:.0f}/100)", style="bold cyan")
+            elif str(cve_id).startswith("VULN-"):
                 status_text = Text(f"🔥 ACTIVE EXPOSURE ({p_score:.0f}/100)", style="bold bright_red")
             elif is_kev:
                 status_text = Text(f"🚨 KEV EXPLOITED ({p_score:.0f}/100)", style="bold red")
@@ -464,5 +466,104 @@ def show_brain_insights(posture):
             box=box.ROUNDED,
             padding=(0, 1),
         ))
+
+
+def show_os_audit_results(os_info: dict, findings: list, show_remediation: bool = True):
+    """Display deep local OS security audit results in a dedicated, high-impact view."""
+    os_name = os_info.get("os_name", "Unknown OS")
+    os_edition = os_info.get("os_edition", "") or os_info.get("os_version", "")
+    os_arch = os_info.get("architecture", "")
+
+    header_text = f"Operating System: [bold white]{os_name} {os_edition}[/] ({os_arch})\n"
+    header_text += f"Evaluated local security policies, defense engines, and patch posture.\n"
+
+    crit_count = sum(1 for f in findings if getattr(f, "severity", "") == "CRITICAL")
+    high_count = sum(1 for f in findings if getattr(f, "severity", "") == "HIGH")
+    med_count = sum(1 for f in findings if getattr(f, "severity", "") == "MEDIUM")
+
+    if not findings:
+        header_text += "[bold green]✓ All local security baseline checks passed! No misconfigurations detected.[/]"
+    else:
+        header_text += f"Identified [bold red]{len(findings)} security finding(s)[/]: "
+        parts = []
+        if crit_count:
+            parts.append(f"[bold red]{crit_count} Critical[/]")
+        if high_count:
+            parts.append(f"[red]{high_count} High[/]")
+        if med_count:
+            parts.append(f"[yellow]{med_count} Medium[/]")
+        header_text += ", ".join(parts) if parts else "[dim]Informational only[/]"
+
+    console.print(Panel(
+        header_text,
+        title="[bold cyan]🛡️ Local OS Security & Policy Audit[/]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1),
+    ))
+
+    if not findings:
+        return
+
+    table = Table(
+        title="Host OS Security Audit Findings",
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold cyan",
+        show_lines=False,
+    )
+    table.add_column("Finding ID", style="bold white", width=22)
+    table.add_column("Severity", width=12, justify="center")
+    table.add_column("Score", width=8, justify="center")
+    table.add_column("Category", width=12, justify="center")
+    table.add_column("Title & Evidence", max_width=50)
+
+    for f in findings:
+        sev = getattr(f, "severity", "LOW")
+        sev_style = SEVERITY_STYLES.get(sev, "dim")
+        score = getattr(f, "score", 0.0)
+        score_style = "bold red" if score >= 7.0 else "bold yellow" if score >= 4.0 else "green"
+
+        title = getattr(f, "title", "")
+        evidence = getattr(f, "evidence", "")
+        ev_summary = f"[dim]{evidence[:80]}...[/]" if len(evidence) > 80 else f"[dim]{evidence}[/]"
+        desc_cell = f"[bold white]{title}[/]\n{ev_summary}"
+
+        table.add_row(
+            getattr(f, "finding_id", ""),
+            Text(sev, style=sev_style),
+            Text(f"{score:.1f}", style=score_style),
+            getattr(f, "category", "config"),
+            desc_cell,
+        )
+
+    console.print(table)
+
+    if show_remediation:
+        for i, f in enumerate(findings, 1):
+            cmd = getattr(f, "remediation_cmd", "")
+            ver_cmd = getattr(f, "verification_cmd", "")
+            if not cmd:
+                continue
+
+            rem_text = Text()
+            rem_text.append(f"{getattr(f, 'description', '')}\n\n", style="dim")
+            rem_text.append(f"Remediation Action:\n", style="bold cyan")
+            for line in cmd.splitlines():
+                if line.strip():
+                    rem_text.append(f"  {line.strip()}\n", style="white")
+
+            if ver_cmd:
+                rem_text.append(f"\nVerification Probe:\n", style="bold green")
+                rem_text.append(f"  {ver_cmd.strip()}\n", style="white")
+
+            console.print(Panel(
+                rem_text,
+                title=f"[bold cyan]Actionable Fix [{i}/{len(findings)}]: {getattr(f, 'title', '')}[/]",
+                border_style="cyan",
+                box=box.ROUNDED,
+                padding=(0, 1),
+            ))
+
 
 

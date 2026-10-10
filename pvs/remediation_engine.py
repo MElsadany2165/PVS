@@ -95,7 +95,10 @@ def group_vulnerabilities_by_root_cause(cve_results: dict) -> List[RootCauseFix]
 
         parts = target_key.split(":")
         host = parts[0]
-        port = int(parts[1]) if len(parts) > 1 else 0
+        try:
+            port = int(parts[1]) if len(parts) > 1 else 0
+        except ValueError:
+            port = 0
 
         # Extract all CVE IDs
         cve_ids = []
@@ -123,16 +126,47 @@ def group_vulnerabilities_by_root_cause(cve_results: dict) -> List[RootCauseFix]
             if not plan and isinstance(cve, dict):
                 plan_dict = cve.get("remediation")
                 if plan_dict:
+                    steps = []
+                    for s in plan_dict.get("steps", []):
+                        if isinstance(s, RemediationStep):
+                            steps.append(s)
+                        elif isinstance(s, dict):
+                            cmd_l = s.get("command_linux", "")
+                            cmd_w = s.get("command_windows", "")
+                            cmd_m = s.get("command_macos", "")
+                            if not (cmd_l or cmd_w or cmd_m) and s.get("command"):
+                                cmd_l = s.get("command", "")
+                                cmd_w = s.get("command", "")
+                                cmd_m = s.get("command", "")
+                            roll_l = s.get("rollback_linux", "") or s.get("rollback", "")
+                            roll_w = s.get("rollback_windows", "") or s.get("rollback", "")
+                            roll_m = s.get("rollback_macos", "") or s.get("rollback", "")
+
+                            steps.append(RemediationStep(
+                                step_number=s.get("step_number", 1),
+                                title=s.get("title", ""),
+                                description=s.get("description", ""),
+                                command_linux=cmd_l,
+                                command_windows=cmd_w,
+                                command_macos=cmd_m,
+                                category=s.get("category", "harden"),
+                                rollback_linux=roll_l,
+                                rollback_windows=roll_w,
+                                rollback_macos=roll_m,
+                                disruption_level=s.get("disruption_level", "NONE"),
+                                estimated_time=s.get("estimated_time", "1-2 mins"),
+                            ))
                     plan = RemediationPlan(
                         service=plan_dict.get("service", ""),
                         summary=plan_dict.get("summary", ""),
+                        steps=steps,
                     )
             if plan and not first_plan:
                 first_plan = plan
                 service_name = plan.service
 
         if not service_name:
-            service_name = f"port-{port}"
+            service_name = f"port-{port}" if port > 0 else "host-os"
 
         # If first_plan is empty or generic, build from get_remediation_plan
         if not first_plan or not getattr(first_plan, "steps", None):
@@ -168,22 +202,33 @@ def group_vulnerabilities_by_root_cause(cve_results: dict) -> List[RootCauseFix]
                 if step.rollback_macos:
                     roll_mac.append(step.rollback_macos.strip())
             elif step.category == "verify" and not verify_cmd:
-                verify_cmd = step.command_linux or step.command_windows or step.command_macos
+                verify_cmd = step.command_windows or step.command_linux or step.command_macos
 
-        if any(str(cid).startswith("VULN-UNAUTH") for cid in cve_ids):
+        if any(str(cid).startswith("OS-") for cid in cve_ids):
+            action_type = "OS_POLICY_HARDEN"
+        elif any(str(cid).startswith("VULN-UNAUTH") for cid in cve_ids):
             action_type = "AUTH_ENFORCE"
         elif any(str(cid).startswith("VULN-") for cid in cve_ids):
             action_type = "CONFIG_HARDEN"
         elif any("rce" in str(cid).lower() for cid in cve_ids):
             action_type = "PACKAGE_UPGRADE"
 
-        cve_summary_text = (
-            f"Resolves {len(cve_ids)} vulnerability/ies ({', '.join(cve_ids[:3])}"
-            f"{' ...' if len(cve_ids) > 3 else ''}) affecting {service_name.upper()} on port {port}."
-        )
+        if port == 0:
+            clean_svc = service_name.replace("os_", "").capitalize()
+            component_title = f"Host OS Security ({clean_svc})"
+            cve_summary_text = (
+                f"Resolves {len(cve_ids)} local OS security issue(s) ({', '.join(cve_ids[:3])}"
+                f"{' ...' if len(cve_ids) > 3 else ''}) affecting system configuration."
+            )
+        else:
+            component_title = f"{service_name.upper()} (Port {port})"
+            cve_summary_text = (
+                f"Resolves {len(cve_ids)} vulnerability/ies ({', '.join(cve_ids[:3])}"
+                f"{' ...' if len(cve_ids) > 3 else ''}) affecting {service_name.upper()} on port {port}."
+            )
 
         root_causes.append(RootCauseFix(
-            component=f"{service_name.upper()} (Port {port})",
+            component=component_title,
             host=host,
             port=port,
             service=service_name,
@@ -193,11 +238,11 @@ def group_vulnerabilities_by_root_cause(cve_results: dict) -> List[RootCauseFix]
             root_cause_summary=cve_summary_text,
             action_type=action_type,
             estimated_time="2-5 mins",
-            disruption_level="CONFIG_RELOAD" if action_type == "CONFIG_HARDEN" else "SERVICE_RESTART",
+            disruption_level="CONFIG_RELOAD" if action_type in ("CONFIG_HARDEN", "OS_POLICY_HARDEN") else "SERVICE_RESTART",
             command_linux="\n".join(cmd_lin) if cmd_lin else f"# Review service {service_name}",
             command_windows="\n".join(cmd_win) if cmd_win else f"# Review service {service_name}",
             command_macos="\n".join(cmd_mac) if cmd_mac else f"# Review service {service_name}",
-            verification_command=verify_cmd or f"nc -zv {host} {port}",
+            verification_command=verify_cmd or (f"nc -zv {host} {port}" if port > 0 else ""),
             rollback_linux="\n".join(roll_lin) if roll_lin else f"# Check backup for {service_name}",
             rollback_windows="\n".join(roll_win) if roll_win else f"# Check backup for {service_name}",
             rollback_macos="\n".join(roll_mac) if roll_mac else f"# Check backup for {service_name}",
@@ -292,6 +337,17 @@ def generate_remediation_script(
                     f"    Write-Host '  [+] Port {fix.port} ({fix.service}) is blocked/hardened.' -ForegroundColor Green",
                     f"}}",
                 ])
+            elif fix.verification_command and fix.verification_command.strip():
+                v_clean = fix.verification_command.strip()
+                lines.extend([
+                    f"Write-Host '  [*] Verifying {fix.component}...' -ForegroundColor Cyan",
+                    f"try {{",
+                    f"    $verOut = {v_clean}",
+                    f"    Write-Host \"    [+] Verification check executed: $verOut\" -ForegroundColor Green",
+                    f"}} catch {{",
+                    f"    Write-Host \"    [!] Verification status check note: $_\" -ForegroundColor DarkGray",
+                    f"}}",
+                ])
 
         lines.extend([
             "",
@@ -351,6 +407,15 @@ def generate_remediation_script(
                     f"    echo \"  [!] Port {fix.port} ({fix.service}) is still listening.\"",
                     f"else",
                     f"    echo \"  [+] Port {fix.port} ({fix.service}) is securely filtered or closed.\"",
+                    f"fi",
+                ])
+            elif fix.verification_command and fix.verification_command.strip():
+                lines.extend([
+                    f"echo \"  [*] Verifying {fix.component}...\"",
+                    f"if {fix.verification_command.strip()}; then",
+                    f"    echo \"    [+] Verification confirmed for {fix.component}!\"",
+                    f"else",
+                    f"    echo \"    [!] Verification check status note for {fix.component}.\"",
                     f"fi",
                 ])
 

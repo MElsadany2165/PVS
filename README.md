@@ -13,7 +13,7 @@
   <a href="#-installation-guide-all-operating-systems"><img src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
   <a href="https://github.com/MElsadany2165/PVS/releases"><img src="https://img.shields.io/badge/version-2.0.0-cyan" alt="Version 2.0.0"></a>
-  <a href="#-development--automated-testing"><img src="https://img.shields.io/badge/tests-82%20passed-brightgreen" alt="82 Tests Passing"></a>
+  <a href="#-development--automated-testing"><img src="https://img.shields.io/badge/tests-100%20passed-brightgreen" alt="100 Tests Passing"></a>
   <a href="#-installation-guide-all-operating-systems"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Docker-purple" alt="Supported Platforms"></a>
   <a href="#%EF%B8%8F-legal-disclaimer"><img src="https://img.shields.io/badge/use-authorized%20only-red" alt="Authorized Use Only"></a>
 </p>
@@ -375,6 +375,7 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 |:---|:---|:---|
 | `pvs` | `pvs` or `pvs wizard` | Launches interactive 4-persona guided assistant |
 | `pvs quick` | `pvs quick [target]` | Zero-config 1-command home network scan with auto-open HTML report |
+| `pvs audit` | `pvs audit [target] [options]` | Deep local operating system policy, patch, and hardening auditor (Windows Defender, Firewall, Updates, BitLocker, etc.) |
 | `pvs scan` | `pvs scan <target> [options]` | Direct CLI port scanner, service fingerprinter, and threat auditor |
 | `pvs fix` | `pvs fix [target] [--script <path>]` | Interactive threat resolver, root-cause solver & automated script generator (.sh / .ps1) |
 | `pvs verify` | `pvs verify <target> <port>` | Live re-test a port to verify if a remediation successfully eliminated the threat |

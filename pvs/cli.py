@@ -78,6 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Report format (default: html)")
     scan_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
     scan_parser.add_argument("--export-script", help="Auto-generate and save ready-to-run remediation script (.sh or .ps1) for all findings")
+    scan_parser.add_argument("--os-audit", action="store_true", default=None, help="Include deep local operating system security & policy audit")
+    scan_parser.add_argument("--no-os-audit", dest="os_audit", action="store_false", help="Disable local operating system security audit")
+
+    # --- audit command ---
+    audit_parser = subparsers.add_parser("audit", help="Run deep local operating system security & hardening audit")
+    audit_parser.add_argument("target", nargs="?", default="me", help="Target host (default: local computer 'me')")
+    audit_parser.add_argument("--fix", "--remediation", dest="fix", action="store_true", default=True, help="Display step-by-step fix procedures [default: enabled]")
+    audit_parser.add_argument("--no-fix", dest="fix", action="store_false", help="Hide remediation procedures")
+    audit_parser.add_argument("--export-script", help="Auto-generate and save ready-to-run remediation script (.sh or .ps1) for all findings")
+    audit_parser.add_argument("-o", "--output", help="Output report file path")
+    audit_parser.add_argument("-f", "--format", default="html", choices=["json", "csv", "html", "all"],
+                              help="Report format (default: html)")
+    audit_parser.add_argument("--open", action="store_true", help="Automatically open generated HTML report in web browser")
 
     # --- fix command ---
     fix_parser = subparsers.add_parser("fix", help="Interactive threat resolver, root-cause solver & script generator")
@@ -274,6 +287,22 @@ async def run_scan(args):
                 tasks = [_lookup(ip, pr, svc, task) for ip, pr, svc in open_services]
                 await asyncio.gather(*tasks)
 
+        # Local OS Security Audit (auto-enabled for local host scans or if --os-audit specified)
+        is_local_target = any(ip in ("127.0.0.1", "::1", "localhost") for ip in targets) or target_str in ("127.0.0.1", "me", "local", "localhost")
+        do_os_audit = getattr(args, "os_audit", None)
+        if (do_os_audit is True) or (do_os_audit is None and is_local_target):
+            show_info("Running local OS security policy & hardening audit...")
+            try:
+                from pvs.os_auditor import audit_local_os
+                os_info, os_findings = audit_local_os()
+                if os_findings:
+                    host_ip = targets[0] if targets else "127.0.0.1"
+                    cve_results[f"{host_ip}:host"] = [f.to_enhanced_cve_dict() for f in os_findings]
+                    show_info(f"OS Audit identified {len(os_findings)} host security configuration finding(s).")
+            except Exception as e:
+                show_warning(f"Local OS audit skipped: {e}")
+
+        if cve_results:
             show_cve_results(cve_results, show_remediation=getattr(args, "fix", False))
 
     total_time = time.time() - start_time
@@ -378,6 +407,7 @@ def run_quick(args):
     quick_args.no_cache = False
     quick_args.clear_cache = False
     quick_args.no_audit = False
+    quick_args.os_audit = True if target == "127.0.0.1" else None
     quick_args.persona = "quick"
 
     return quick_args
@@ -527,6 +557,78 @@ def run_fix(args):
     return 0
 
 
+async def run_audit(args):
+    """Execute the local OS security audit command."""
+    from pvs.os_auditor import audit_local_os
+    from pvs.display import show_os_audit_results, show_brain_insights, show_root_cause_solutions
+    from pvs.brain import analyze_scan_results
+    from pvs.remediation_engine import generate_remediation_script
+    from pvs.reporter import build_scan_data, generate_json_report, generate_csv_report, generate_html_report
+
+    show_info("Performing local operating system security & hardening audit...")
+    os_info, findings = audit_local_os()
+
+    show_os_audit_results(os_info, findings, show_remediation=getattr(args, "fix", True))
+
+    target_str = "127.0.0.1"
+    cve_results = {f"{target_str}:host": [f.to_enhanced_cve_dict() for f in findings]}
+
+    brain_posture = analyze_scan_results([], cve_results, scan_mode="offline")
+    show_brain_insights(brain_posture)
+
+    if getattr(brain_posture, "root_cause_actions", None):
+        show_root_cause_solutions(brain_posture.root_cause_actions)
+
+    export_script_path = getattr(args, "export_script", None)
+    if export_script_path and findings:
+        _, script_content = generate_remediation_script(cve_results, target_ip=target_str)
+        try:
+            with open(export_script_path, "w", encoding="utf-8") as f:
+                f.write(script_content)
+            show_info(f"Automated remediation script exported: {export_script_path}")
+        except Exception as e:
+            show_error(f"Could not export remediation script: {e}")
+
+    # Report generation
+    scan_data = build_scan_data(target_str, [], cve_results, scan_mode="offline", brain_posture=brain_posture)
+
+    if getattr(args, "output", None):
+        base = args.output.rsplit(".", 1)[0] if "." in args.output else args.output
+    else:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if not os.path.exists("reports"):
+            try:
+                os.makedirs("reports")
+            except OSError:
+                pass
+        base = f"reports/PVS-OS-Audit-{timestamp}"
+
+    fmt = getattr(args, "format", "html")
+    generated_files = []
+    if fmt in ("json", "all"):
+        p = f"{base}.json"
+        generate_json_report(scan_data, p)
+        generated_files.append(p)
+    if fmt in ("csv", "all"):
+        p = f"{base}.csv"
+        generate_csv_report(scan_data, p)
+        generated_files.append(p)
+    if fmt in ("html", "all"):
+        p = f"{base}.html"
+        generate_html_report(scan_data, p)
+        generated_files.append(p)
+        if getattr(args, "open", False):
+            try:
+                webbrowser.open(f"file://{os.path.abspath(p)}")
+            except Exception:
+                pass
+
+    for gf in generated_files:
+        show_info(f"Audit report saved: {gf}")
+
+    return 0
+
+
 def run_verify(args):
     """Actively verify if a remediation eliminated the threat."""
     from pvs.remediation_engine import verify_remediation_live
@@ -573,6 +675,12 @@ def main():
             return asyncio.run(run_scan(args))
         except KeyboardInterrupt:
             show_info("\nScan interrupted by user.")
+            return 130
+    elif args.command == "audit":
+        try:
+            return asyncio.run(run_audit(args))
+        except KeyboardInterrupt:
+            show_info("\nAudit interrupted by user.")
             return 130
     elif args.command == "fix":
         return run_fix(args)
