@@ -100,32 +100,42 @@ sudo dnf install -y python3 python3-pip git
 sudo pacman -S python python-pip git
 ```
 
-#### Step 2: Clone and Install
+#### Step 2: Clone and Run (Choose Any Method)
+
 ```bash
 # Clone the repository
 git clone https://github.com/MElsadany2165/PVS.git
 cd PVS
+```
 
-# Option A: Isolated virtual environment (Recommended for PEP 668 / Debian 12+ / Ubuntu 23.04+)
+##### 🌟 Method 1: The Zero-Config Auto-Launcher (Easiest — No Pip Setup Required)
+PVS includes a self-bootstrapping script that automatically sets up dependencies and works out of the box:
+```bash
+chmod +x pvs.sh
+
+# Run directly:
+./pvs.sh
+
+# Or install 'pvs' globally so you can type 'pvs' from any folder:
+./pvs.sh install
+```
+
+##### ⚡ Method 2: Direct 1-Line Pip Install (Modern Linux / PEP 668)
+Modern Linux distros (Ubuntu 23+, Debian 12+, Kali) protect system packages via PEP 668. To install PVS directly without needing third-party tools like `pipx`:
+```bash
+pip install --user . --break-system-packages
+```
+
+##### 📦 Method 3: Standard Python Virtual Environment
+```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install .
-
-# Option B: Global installation using pipx (PEP 668 friendly)
-pipx install .
-
-# Option C: Global pip install (Debian/Ubuntu override if needed)
-pip install . --break-system-packages
 ```
 
 #### Step 3: Run
 ```bash
-# Direct CLI command (if installed globally or venv active)
 pvs
-
-# Or execute the included launcher script:
-chmod +x pvs.sh
-./pvs.sh
 ```
 
 ---
