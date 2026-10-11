@@ -377,14 +377,17 @@ class VulnerabilityEngine:
     NVD API v2.0 queries, and OSV.dev fallback.
     """
 
-    def __init__(self, nvd_api_key: Optional[str] = None, use_cache: bool = True):
+    def __init__(self, nvd_api_key: Optional[str] = None, use_cache: bool = True, offline_mode: Optional[bool] = None):
         self.nvd_client = NVDClient(api_key=nvd_api_key)
         self.use_cache = use_cache
         self.cache = LocalVulnCache()
         self._kev_updated = False
         # Run connectivity pre-flight ONCE at engine startup.
         # This prevents silent fake results when the machine has no internet.
-        self._online: bool = check_internet_connectivity()
+        if offline_mode is True:
+            self._online = False
+        else:
+            self._online = check_internet_connectivity()
         self.scan_mode: str = "online" if self._online else "offline"
 
     @staticmethod

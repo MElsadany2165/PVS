@@ -699,6 +699,32 @@ class PVSWebHandler(BaseHTTPRequestHandler):
                 "rollback_script": r_script,
             }).encode("utf-8"))
 
+        elif path == "/api/monitor/events":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            try:
+                from .monitor import MonitorStorage
+                storage = MonitorStorage()
+                events = storage.get_events(limit=50)
+            except Exception as e:
+                events = []
+            self.wfile.write(json.dumps({"events": events}).encode("utf-8"))
+
+        elif path == "/api/discover":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            try:
+                from .discover import discover_subnet
+                from .scanner import get_local_subnet
+                subnet = get_local_subnet()
+                devices = asyncio.run(discover_subnet(target_subnet=subnet, timeout=1.0, concurrency=80))
+                payload = {"subnet": subnet, "devices": [d.to_dict() for d in devices]}
+            except Exception as e:
+                payload = {"subnet": "error", "devices": [], "error": str(e)}
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -729,6 +755,25 @@ class PVSWebHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "already_scanning"}).encode("utf-8"))
+
+        elif path == "/api/monitor/test-webhook":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8")
+            try:
+                data = json.loads(body)
+                url = data.get("webhook_url", "")
+                from .monitor import WebhookDispatcher
+                success = asyncio.run(WebhookDispatcher.send_test_alert(url))
+                self.send_response(200 if success else 400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": success}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
         else:
             self.send_response(404)
             self.end_headers()

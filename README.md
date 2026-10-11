@@ -12,8 +12,8 @@
 <p align="center">
   <a href="#-installation-guide-all-operating-systems"><img src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
-  <a href="https://github.com/MElsadany2165/PVS/releases"><img src="https://img.shields.io/badge/version-2.0.0-cyan" alt="Version 2.0.0"></a>
-  <a href="#-development--automated-testing"><img src="https://img.shields.io/badge/tests-116%20passed-brightgreen" alt="116 Tests Passing"></a>
+  <a href="https://github.com/MElsadany2165/PVS/releases"><img src="https://img.shields.io/badge/version-2.1.0-cyan" alt="Version 2.1.0"></a>
+  <a href="#-development--automated-testing"><img src="https://img.shields.io/badge/tests-128%20passed-brightgreen" alt="128 Tests Passing"></a>
   <a href="#-installation-guide-all-operating-systems"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Docker-purple" alt="Supported Platforms"></a>
   <a href="#%EF%B8%8F-legal-disclaimer"><img src="https://img.shields.io/badge/use-authorized%20only-red" alt="Authorized Use Only"></a>
 </p>
@@ -336,6 +336,64 @@ pvs scan 192.168.1.1 -o reports/audit_2026.html
 
 ---
 
+### 🛡️ 7. 24/7 Continuous Threat Monitor & Webhook Alerts (`pvs monitor`)
+
+Run PVS as a persistent background sentinel to continuously audit infrastructure, diff network attack surface against baseline snapshots, and dispatch instant security notifications:
+
+```bash
+# Continuous monitoring of local computer or server every 5 minutes (default: 300s)
+pvs monitor me
+
+# Monitor network server with Discord webhook notifications
+pvs monitor 192.168.1.10 --interval 120 --webhook "https://discord.com/api/webhooks/..."
+
+# Monitor production host with Slack alerts on any new ports or critical CVEs
+pvs monitor 10.0.0.50 --webhook "https://hooks.slack.com/services/..." --alert-on critical
+
+# Single audit pass with automated diff comparison (perfect for CI/CD regression testing)
+# Exits with returncode 1 if unexpected new ports or high/critical vulnerabilities appear!
+pvs monitor 192.168.1.1 --once
+
+# Send a verified test alert to confirm webhook connectivity
+pvs monitor --test-webhook "https://discord.com/api/webhooks/..."
+
+# View historical drift timeline and recorded security events
+pvs monitor --history
+```
+
+#### What PVS Monitor Detects in Real Time:
+- 🚨 **Newly Opened Ports**: Instant alert when an unexpected port opens (unauthorized service or potential backdoor).
+- 🔒 **Closed Ports**: Records port closures and attack surface reductions.
+- 🔄 **Service & Version Drift**: Alerts when a daemon banner or version changes (upgrades or silent modifications).
+- 🔥 **New Vulnerabilities**: Flags newly identified CVEs or active probe findings immediately.
+- 🎉 **Remediated Threats**: Validates and records when previous vulnerabilities are successfully eliminated.
+- 📊 **Risk Score Delta**: Computes and graphs security posture delta over time.
+
+---
+
+### 📡 8. High-Speed Subnet Sweep & Asset Intelligence (`pvs discover`)
+
+Map out an entire physical or virtual network in seconds without manual IP configuration:
+
+```bash
+# Auto-detect local Wi-Fi / Ethernet subnet and discover all connected assets
+pvs discover
+
+# Sweep specific enterprise CIDR subnet
+pvs discover 10.0.0.0/24 -c 200 -t 0.8
+
+# Export discovered assets and OS fingerprints as machine-readable JSON
+pvs discover 192.168.1.0/24 -f json -o assets.json
+```
+
+Discovers:
+- **Hostname resolution** via non-blocking reverse DNS lookups.
+- **Device Role Classification**: Automatically detects and tags *Gateways/Routers*, *Windows Workstations*, *Linux Servers*, *Network Printers*, and *IP Cameras*.
+- **OS Fingerprinting**: Identifies operating system families via TTL response heuristics and management port signatures.
+- **Round-Trip Latency**: Sub-millisecond network response timing per node.
+
+---
+
 ## 🔍 Deep Dive: What PVS Scans & How to Fix Each Threat
 
 PVS executes deep active probes and semantic version matching to detect real-world network vulnerabilities. The table below details every category, the security risk, and the remediation procedures PVS provides to eliminate the threat:
@@ -380,6 +438,8 @@ PVS executes deep active probes and semantic version matching to detect real-wor
 | `pvs audit` | `pvs audit [target] [options]` | Deep local operating system policy, patch, and hardening auditor (Defender, Firewall, BitLocker, etc.) |
 | `pvs scan` | `pvs scan <target> [options]` | Direct CLI port scanner, service fingerprinter, and threat auditor |
 | `pvs fix` | `pvs fix [target] [options]` | Interactive threat resolver, root-cause solver, `--dry-run` simulation & `--rollback` script generator |
+| `pvs monitor` | `pvs monitor [target] [--webhook URL]` | 24/7 continuous network monitor, SQLite baseline diffing & multi-channel webhook alerts (Discord/Slack/Telegram) |
+| `pvs discover` | `pvs discover [subnet]` | High-speed network sweep, device asset discovery, latency tracking & OS fingerprinting |
 | `pvs verify` | `pvs verify <target> <port>` | Live re-test a port to verify if a remediation successfully eliminated the threat |
 | `pvs info` | `pvs info <port\|service>` | Looks up well-known port numbers and service names |
 | `pvs shortcut` | `pvs shortcut` | Creates a Desktop launcher shortcut for Windows |

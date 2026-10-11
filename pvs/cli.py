@@ -133,6 +133,25 @@ def build_parser() -> argparse.ArgumentParser:
     # --- shortcut command ---
     subparsers.add_parser("shortcut", help="Create a Desktop shortcut for 1-click launching PVS")
 
+    # --- monitor command ---
+    mon_parser = subparsers.add_parser("monitor", help="24/7 continuous network monitoring, baseline diffing & webhook alerts")
+    mon_parser.add_argument("target", nargs="?", default="127.0.0.1", help="Target host or IP to monitor (default: 127.0.0.1)")
+    mon_parser.add_argument("--interval", type=int, default=300, help="Polling interval in seconds (default: 300)")
+    mon_parser.add_argument("-p", "--ports", default="top100", help="Ports to audit per cycle (default: top100)")
+    mon_parser.add_argument("--webhook", help="Webhook alert URL (Discord, Slack, Telegram, or generic JSON HTTP endpoint)")
+    mon_parser.add_argument("--alert-on", default="all", choices=["all", "ports", "vulns", "critical"], help="Alert trigger criteria (default: all)")
+    mon_parser.add_argument("--once", action="store_true", help="Run a single audit pass, diff against previous baseline, and exit")
+    mon_parser.add_argument("--history", action="store_true", help="Display historical monitor events and posture drift logs")
+    mon_parser.add_argument("--test-webhook", help="Send a test notification alert to verify webhook integration")
+
+    # --- discover command ---
+    disc_parser = subparsers.add_parser("discover", help="High-speed subnet sweep, asset discovery & OS fingerprinting")
+    disc_parser.add_argument("target", nargs="?", default="local", help="Subnet CIDR or keyword (default: auto-detect local network)")
+    disc_parser.add_argument("-t", "--timeout", type=float, default=1.0, help="Probe timeout in seconds (default: 1.0)")
+    disc_parser.add_argument("-c", "--concurrency", type=int, default=100, help="Max concurrency for sweep (default: 100)")
+    disc_parser.add_argument("-f", "--format", default="terminal", choices=["terminal", "json"], help="Output format (default: terminal)")
+    disc_parser.add_argument("-o", "--output", help="Export discovered assets to file")
+
     return parser
 
 
@@ -758,6 +777,104 @@ def run_serve(args):
     return 0
 
 
+def run_monitor(args):
+    """Execute continuous threat monitoring, baseline diffing or webhook test."""
+    from pvs.monitor import start_monitor_daemon, WebhookDispatcher, MonitorStorage
+    from pvs.display import console
+    from rich.table import Table
+    from rich import box
+
+    if getattr(args, "test_webhook", None):
+        url = args.test_webhook
+        console.print(f"[bold cyan]Dispatching test alert to webhook:[/] [white]{url}[/]")
+        success = asyncio.run(WebhookDispatcher.send_test_alert(url))
+        if success:
+            console.print("[bold green]✔ Webhook test notification delivered successfully![/]")
+            return 0
+        else:
+            console.print("[bold red]✘ Failed to deliver webhook alert. Check URL and connectivity.[/]")
+            return 1
+
+    if getattr(args, "history", False):
+        storage = MonitorStorage()
+        events = storage.get_events(limit=50)
+        if not events:
+            console.print("[dim]No historical monitoring events recorded yet.[/]")
+            return 0
+        table = Table(title="🛡️ PVS Monitor Event History", box=box.ROUNDED, border_style="cyan")
+        table.add_column("Timestamp", style="dim")
+        table.add_column("Target", style="bold white")
+        table.add_column("Type", style="yellow")
+        table.add_column("Severity", style="bold")
+        table.add_column("Event Title", style="white")
+        for ev in events:
+            sev_style = "bold red" if ev["severity"] in ("CRITICAL", "HIGH") else ("yellow" if ev["severity"] == "MEDIUM" else "green")
+            table.add_row(
+                ev["iso_time"],
+                ev["target"],
+                ev["event_type"],
+                f"[{sev_style}]{ev['severity']}[/]",
+                ev["title"],
+            )
+        console.print(table)
+        return 0
+
+    target = getattr(args, "target", "127.0.0.1")
+    if target in ("home", "local", "me") or not target:
+        target = "127.0.0.1"
+
+    targets = resolve_targets(target)
+    if not targets:
+        show_error(f"Could not resolve target '{target}'.")
+        return 1
+
+    return asyncio.run(start_monitor_daemon(
+        targets=targets,
+        ports_preset=getattr(args, "ports", "top100"),
+        interval=getattr(args, "interval", 300),
+        webhook_url=getattr(args, "webhook", None),
+        alert_on=getattr(args, "alert_on", "all"),
+        once=getattr(args, "once", False),
+    ))
+
+
+def run_discover(args):
+    """Execute high-speed subnet sweep & asset discovery."""
+    import json
+    from pvs.discover import discover_subnet, display_discovered_devices
+
+    target = getattr(args, "target", "local")
+    if target in ("home", "local", "auto") or not target:
+        target = get_local_subnet()
+
+    show_info(f"Initiating network asset discovery on subnet: {target}...")
+    devices = asyncio.run(discover_subnet(
+        target_subnet=target,
+        timeout=getattr(args, "timeout", 1.0),
+        concurrency=getattr(args, "concurrency", 100),
+    ))
+
+    fmt = getattr(args, "format", "terminal")
+    if fmt == "json":
+        data = [d.to_dict() for d in devices]
+        out = json.dumps({"subnet": target, "count": len(devices), "devices": data}, indent=2)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(out)
+            show_info(f"Asset discovery exported to: {args.output}")
+        else:
+            print(out)
+    else:
+        display_discovered_devices(devices, target)
+        if getattr(args, "output", None):
+            data = [d.to_dict() for d in devices]
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump({"subnet": target, "count": len(devices), "devices": data}, f, indent=2)
+            show_info(f"Asset discovery report saved: {args.output}")
+
+    return 0
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -803,6 +920,10 @@ def main():
         return run_compliance(args)
     elif args.command in ("serve", "ui"):
         return run_serve(args)
+    elif args.command == "monitor":
+        return run_monitor(args)
+    elif args.command == "discover":
+        return run_discover(args)
     elif args.command == "verify":
         return run_verify(args)
     elif args.command == "info":
